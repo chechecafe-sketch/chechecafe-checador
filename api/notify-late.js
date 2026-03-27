@@ -23,7 +23,7 @@ export default async function handler(req, res) {
     // Notify the employee
     if (employee.email) {
       await resend.emails.send({
-        from: "Che Che Café <checador@tudominio.com>",
+        from: "Che Che Café <onboarding@resend.dev>",
         to: [employee.email],
         subject: record.note
           ? "⚠️ Registro fuera de ventana — Che Che Café"
@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     // If intermedio note, also notify Victoria
     if (record.note) {
       await resend.emails.send({
-        from: "Che Che Café <checador@tudominio.com>",
+        from: "Che Che Café <onboarding@resend.dev>",
         to: [VICTORIA_EMAIL],
         subject: `⚠️ Registro intermedio fuera de ventana — ${employee.fullName}`,
         html: `
