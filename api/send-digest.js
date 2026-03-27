@@ -132,7 +132,7 @@ export default async function handler(req, res) {
     const labels = { diario: "Diario", semanal: "Semanal", quincenal: "Quincenal" };
     const now = new Date().toLocaleDateString("es-MX", { day: "numeric", month: "long" });
     await resend.emails.send({
-      from: "Che Che Café <checador@tudominio.com>",
+      from: "Che Che Café <onboarding@resend.dev>",
       to: ADMIN_EMAILS,
       subject: `☕ Digest ${labels[type]} de Asistencia — ${now}`,
       html,
