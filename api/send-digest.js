@@ -3,9 +3,7 @@ import { Resend } from "resend";
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const ADMIN_EMAILS = [
-  "luiscgarinian@me.com",
-  "ferhughes04@gmail.com",
-  "saiv1221hughes@gmail.com",
+  "luiscgarinian@gmail.com",
 ];
 
 const STORES = [
