@@ -1,7 +1,7 @@
 import { Resend } from "resend";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
-const VICTORIA_EMAIL = "ferhughes04@gmail.com";
+const VICTORIA_EMAIL = "luiscgarinian@gmail.com";
 
 function formatMin(mins) {
   if (!mins || mins === 0) return "0 min";
