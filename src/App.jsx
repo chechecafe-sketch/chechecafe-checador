@@ -224,7 +224,9 @@ export default function App() {
   // Check state
   const [checkState, setCheckState] = useState({storeId:"",employeeId:"",searching:false,result:null,mode:"entrada"});
   const [checkoutStep, setCheckoutStep] = useState("select");
-  const [isCajero, setIsCajero] = useState(null);
+  const [isCajero, setIsCajero] = useState(false);
+  const [cajerosDesignados, setCajerosDesignados] = useState({});
+  const [earlyLeaveWarning, setEarlyLeaveWarning] = useState(null);
   const [checkoutForm, setCheckoutForm] = useState({efectivo:"",tarjeta:"",gastos:[{concepto:"",monto:"",fotoPreview:null}],notas:""});
   const [cutError, setCutError] = useState("");
   const [submittingCut, setSubmittingCut] = useState(false);
@@ -395,13 +397,46 @@ export default function App() {
         const dist=haversine(latitude,longitude,store.lat,store.lng);
         const isDemoMode=BYPASS_USERS.includes(currentUser.username);
         if(!isDemoMode&&dist>RADIUS_METERS){setCheckState(s=>({...s,searching:false,result:{error:`Estás a ${Math.round(dist)}m de la tienda. Necesitas estar dentro de ${RADIUS_METERS}m.`}}));return;}
-        const today=new Date();today.setHours(0,0,0,0);
-        const {data:lastEntry}=await supabase.from("records").select("*").eq("employee_id",currentUser.employeeId).eq("type","entrada").gte("timestamp",today.toISOString()).order("timestamp",{ascending:false}).limit(1);
         const now=new Date();
-        const rec={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:store.name,timestamp:now.toISOString(),late_minutes:0,shift:lastEntry?.[0]?.shift||"fuera_horario",note:"",type:"salida",distance:Math.round(dist)};
+        const day=now.getDay();
+        const today=new Date(now);today.setHours(0,0,0,0);
+        const {data:lastEntry}=await supabase.from("records").select("*").eq("employee_id",currentUser.employeeId).eq("type","entrada").gte("timestamp",today.toISOString()).order("timestamp",{ascending:false}).limit(1);
+        const shift=lastEntry?.[0]?.shift||"fuera_horario";
+
+        // Early leave detection
+        // Closing times: L-J 22:00, V-S-D vespertino 23:00
+        const isWeekend = day===5||day===6||day===0; // V,S,D
+        const closingHour = isWeekend ? 23 : 22;
+        const nowMin = now.getHours()*60+now.getMinutes();
+        const closeMin = closingHour*60;
+        let earlyMins = 0;
+        if(shift==="vespertino" && nowMin < closeMin-15) {
+          earlyMins = closeMin - nowMin;
+        }
+
+        // Check if employee is designated cajero for this shift
+        const shiftKey = `${currentUser.storeId}_${shift}_${today.toISOString().split("T")[0]}`;
+        const {data:existingCut}=await supabase.from("cuts").select("employee_id").eq("store_id",currentUser.storeId).gte("timestamp",today.toISOString()).limit(1);
+        const {data:shiftEntries}=await supabase.from("records").select("employee_id,employee_name").eq("store_id",currentUser.storeId).eq("type","entrada").eq("shift",shift).gte("timestamp",today.toISOString());
+        
+        // First person to check in this shift = designated cajero
+        const firstInShift = shiftEntries?.[0]?.employee_id;
+        const amCajero = firstInShift === currentUser.employeeId && (!existingCut || existingCut.length===0);
+
+        const rec={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:store.name,timestamp:now.toISOString(),late_minutes:0,shift,note:earlyMins>0?`Salida anticipada: ${earlyMins} min antes`:"",type:"salida",distance:Math.round(dist)};
         await supabase.from("records").insert(rec);
+
+        if(earlyMins>0) setEarlyLeaveWarning(earlyMins);
+        else setEarlyLeaveWarning(null);
+        setIsCajero(amCajero);
         setCheckState(s=>({...s,searching:false}));
-        setCheckoutStep("cajero");
+
+        if(amCajero) {
+          // Notify cajero by showing form directly
+          setCheckoutStep("form");
+        } else {
+          setCheckoutStep("done");
+        }
       },
       ()=>setCheckState(s=>({...s,searching:false,result:{error:"No se pudo obtener tu ubicación."}})),
       {enableHighAccuracy:true,timeout:15000}
@@ -537,36 +572,23 @@ export default function App() {
   );
 
   // ── CHECKOUT CAJERO ───────────────────────────────────────────────────────
-  if(tab==="check"&&checkoutStep==="cajero") return(
-    <><style>{css}</style>
-    <div className="app">
-      <div className="header"><h1>☕ Che Che Café</h1><p>Check out registrado ✅</p></div>
-      <div className="content">
-        <div className="card" style={{textAlign:"center"}}>
-          <div style={{fontSize:44,margin:"10px 0 14px"}}>🧾</div>
-          <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,color:p.coffee,marginBottom:8}}>¿Eres encargado de caja este turno?</div>
-          <div style={{fontSize:13,color:p.gray,marginBottom:24,lineHeight:1.6}}>Solo una persona por turno registra el corte de caja.</div>
-          <div style={{display:"flex",gap:12}}>
-            <button className={`btn-choice ${isCajero===true?"selected":""}`} onClick={()=>setIsCajero(true)}>✅ Sí, soy cajero</button>
-            <button className={`btn-choice ${isCajero===false?"selected":""}`} onClick={()=>setIsCajero(false)}>No, solo salida</button>
-          </div>
-          {isCajero!==null&&(
-            <button className="btn btn-primary" style={{marginTop:20}} onClick={()=>{if(isCajero)setCheckoutStep("form");else setCheckoutStep("done");}}>
-              Continuar →
-            </button>
-          )}
-        </div>
-      </div>
-    </div></>
-  );
+
 
   // ── CHECKOUT FORM ─────────────────────────────────────────────────────────
   if(tab==="check"&&checkoutStep==="form") return(
     <><style>{css}</style>
     <div className="app">
-      <div className="header"><h1>☕ Che Che Café</h1><p>Corte de turno</p></div>
+      <div className="header"><h1>☕ Che Che Café</h1><p>Corte de turno — Obligatorio</p></div>
       <div className="content">
-        <div className="info-box info-blue">Los egresos no pueden superar el total del corte.</div>
+        {earlyLeaveWarning&&(
+          <div className="redFlag">
+            <div style={{fontWeight:700,color:p.red,fontSize:15,marginBottom:6}}>⚠️ Salida anticipada detectada</div>
+            <div style={{fontSize:13,color:p.red,lineHeight:1.6}}>Estás registrando tu salida <strong>{earlyLeaveWarning} minutos antes</strong> de tu horario de cierre. Esta salida queda registrada y es sujeta a <strong>auditoría operativa</strong> y posibles descuentos en compensación y medidas disciplinarias.</div>
+          </div>
+        )}
+        <div className="info-box info-blue">
+          🔒 Eres el <strong>cajero designado</strong> de este turno. El corte es obligatorio para completar tu salida. Efectivo y tarjeta son campos requeridos.
+        </div>
         <div className="card">
           <div className="card-title">💰 Ventas del turno</div>
           <label>Ventas en efectivo (MXN)</label>
@@ -621,8 +643,8 @@ export default function App() {
           <div className="card-title">📝 Notas del turno</div>
           <textarea placeholder="Incidencias, observaciones, mensajes para el siguiente turno..." value={checkoutForm.notas} onChange={e=>setCheckoutForm(f=>({...f,notas:e.target.value}))} />
         </div>
-        <button className="btn btn-primary" onClick={handleSubmitCut} disabled={(!checkoutForm.efectivo&&!checkoutForm.tarjeta)||isOverspent||submittingCut}>{submittingCut?"⏳ Guardando corte...":"✅ Registrar corte"}</button>
-        <button className="btn btn-secondary" onClick={()=>setCheckoutStep("cajero")}>← Regresar</button>
+        <button className="btn btn-primary" onClick={handleSubmitCut} disabled={!checkoutForm.efectivo||!checkoutForm.tarjeta||isOverspent||submittingCut}>{submittingCut?"⏳ Guardando corte...":"✅ Registrar corte"}</button>
+        <div style={{fontSize:12,color:p.gray,textAlign:"center",marginTop:8}}>Efectivo y tarjeta son obligatorios para completar tu salida.</div>
       </div>
     </div></>
   );
@@ -691,7 +713,7 @@ export default function App() {
               <button className="btn btn-check" disabled={checkState.searching} onClick={handleCheckIn}>
                 {checkState.searching&&checkState.mode==="entrada"?"Verificando...":"📍 Check in — Entrada"}
               </button>
-              <button className="btn btn-checkout" disabled={checkState.searching} onClick={()=>{setCheckState(s=>({...s,mode:"salida"}));handleCheckOut();}}>
+              <button className="btn btn-checkout" disabled={checkState.searching} onClick={()=>{setCheckState(s=>({...s,mode:"salida"}));setEarlyLeaveWarning(null);handleCheckOut();}}>
                 {checkState.searching&&checkState.mode==="salida"?"Verificando...":"🚪 Check out — Salida"}
               </button>
               <div style={{fontSize:12,color:p.gray,textAlign:"center",marginTop:10}}>Debes estar dentro de {RADIUS_METERS}m de tu tienda</div>
