@@ -15,7 +15,7 @@ const STORES = [
   { id: "DVA", name: "Del Valle", lat: 19.373600044458726, lng: -99.16078647575902 },
 ];
 
-const RADIUS_METERS = 50;
+const RADIUS_METERS = 100;
 const LATE_MINUTES = 15;
 const CAPUCHINO_PRICE = 66;
 const ADMIN_PIN = "5366";
