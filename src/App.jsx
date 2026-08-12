@@ -382,7 +382,7 @@ export default function App() {
         setCheckState(s=>({...s,searching:false,result:{success:true,rec}}));
       },
       ()=>setCheckState(s=>({...s,searching:false,result:{error:"No se pudo obtener tu ubicación."}})),
-      {enableHighAccuracy:true,timeout:15000}
+      {enableHighAccuracy:true,timeout:10000,maximumAge:30000}
     );
   }
 
@@ -439,7 +439,7 @@ export default function App() {
         }
       },
       ()=>setCheckState(s=>({...s,searching:false,result:{error:"No se pudo obtener tu ubicación."}})),
-      {enableHighAccuracy:true,timeout:15000}
+      {enableHighAccuracy:true,timeout:10000,maximumAge:30000}
     );
   }
 
