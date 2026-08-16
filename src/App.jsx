@@ -10,12 +10,12 @@ const STORES = [
   { id: "SMR", name: "Santa María La Ribera", lat: 19.44815114965266, lng: -99.15418204004736 },
   { id: "TAB", name: "Tabacalera", lat: 19.43910242690003, lng: -99.15578818924966 },
   { id: "JUA", name: "Juárez", lat: 19.426522070418077, lng: -99.15542057575757 },
-  { id: "CEN", name: "Centro", lat: 19.4351227, lng: -99.1327956 },
+  { id: "CEN", name: "Centro", lat: 19.435325031610592, lng: -99.13280633342903 },
   { id: "JAR", name: "Jardín", lat: 19.45033734600347, lng: -99.16094680274179 },
   { id: "DVA", name: "Del Valle", lat: 19.373600044458726, lng: -99.16078647575902 },
 ];
 
-const RADIUS_METERS = 100;
+const RADIUS_METERS = 300;
 const LATE_MINUTES = 15;
 const CAPUCHINO_PRICE = 66;
 const ADMIN_PIN = "5366";
@@ -382,7 +382,7 @@ export default function App() {
         setCheckState(s=>({...s,searching:false,result:{success:true,rec}}));
       },
       ()=>setCheckState(s=>({...s,searching:false,result:{error:"No se pudo obtener tu ubicación."}})),
-      {enableHighAccuracy:true,timeout:10000,maximumAge:30000}
+      {enableHighAccuracy:true,timeout:15000}
     );
   }
 
@@ -439,7 +439,7 @@ export default function App() {
         }
       },
       ()=>setCheckState(s=>({...s,searching:false,result:{error:"No se pudo obtener tu ubicación."}})),
-      {enableHighAccuracy:true,timeout:10000,maximumAge:30000}
+      {enableHighAccuracy:true,timeout:15000}
     );
   }
 
