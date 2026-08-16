@@ -10,12 +10,12 @@ const STORES = [
   { id: "SMR", name: "Santa María La Ribera", lat: 19.44815114965266, lng: -99.15418204004736 },
   { id: "TAB", name: "Tabacalera", lat: 19.43910242690003, lng: -99.15578818924966 },
   { id: "JUA", name: "Juárez", lat: 19.426522070418077, lng: -99.15542057575757 },
-  { id: "CEN", name: "Centro", lat: 19.435325031610592, lng: -99.13280633342903 },
+  { id: "CEN", name: "Centro", lat: 19.4351227, lng: -99.1327956 },
   { id: "JAR", name: "Jardín", lat: 19.45033734600347, lng: -99.16094680274179 },
   { id: "DVA", name: "Del Valle", lat: 19.373600044458726, lng: -99.16078647575902 },
 ];
 
-const RADIUS_METERS = 300;
+const RADIUS_METERS = 100;
 const LATE_MINUTES = 15;
 const CAPUCHINO_PRICE = 66;
 const ADMIN_PIN = "5366";
@@ -252,13 +252,26 @@ export default function App() {
   const [stats, setStats] = useState({quinceMinutes:0,monthMinutes:0,totalMinutes:0,totalChecks:0,quinceAbsences:0});
   const [autoRefresh, setAutoRefresh] = useState(0);
 
+  // ── TAREAS DEL DÍA ──────────────────────────────────────────────────────
+  const [myTasks, setMyTasks] = useState([]);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [uploadingTaskId, setUploadingTaskId] = useState(null);
+  const [taskUploadError, setTaskUploadError] = useState("");
+  const [adminTaskForm, setAdminTaskForm] = useState({employeeId:"",date:new Date().toISOString().slice(0,10),items:[""]});
+  const [adminTasksList, setAdminTasksList] = useState([]);
+  const [adminTasksDate, setAdminTasksDate] = useState(new Date().toISOString().slice(0,10));
+  const [assigningTasks, setAssigningTasks] = useState(false);
+  const [taskPhotoModal, setTaskPhotoModal] = useState(null);
+
   useEffect(()=>{
-    if(currentUser) { setScreen("main"); loadMyRecords(); loadStats(); loadAllCuts(); if(SUPER_ADMIN_USERS.includes(currentUser.username)) { setAdminUnlocked(true); } }
+    if(currentUser) { setScreen("main"); loadMyRecords(); loadStats(); loadAllCuts(); loadMyTasks(); if(SUPER_ADMIN_USERS.includes(currentUser.username)) { setAdminUnlocked(true); } }
     else setScreen("auth");
   },[currentUser]);
 
   // Auto-refresh admin data every 30s
   useEffect(()=>{ if(adminUnlocked) loadAdminData(); },[adminUnlocked]);
+
+  useEffect(()=>{ if(adminUnlocked&&adminTab==="tareas") loadAdminTasks(); },[adminUnlocked,adminTab,adminTasksDate]);
 
   async function loadMyRecords() {
     if(!currentUser) return;
@@ -293,6 +306,82 @@ export default function App() {
     if(recs) setRecords(recs);
     if(cutsData){setCuts(cutsData);setAllCuts(cutsData);}if(cutsErr)console.error("cuts error:",JSON.stringify(cutsErr));
     setLoadingAdmin(false);
+  }
+
+  // ── TAREAS: comprimir y subir foto de evidencia ──────────────────────────
+  function compressImage(file, maxDim=900, quality=0.6){
+    return new Promise((resolve,reject)=>{
+      const img=new Image();
+      const reader=new FileReader();
+      reader.onload=e=>{img.onload=()=>{
+        let {width,height}=img;
+        if(width>height&&width>maxDim){height=Math.round(height*maxDim/width);width=maxDim;}
+        else if(height>maxDim){width=Math.round(width*maxDim/height);height=maxDim;}
+        const canvas=document.createElement("canvas");
+        canvas.width=width;canvas.height=height;
+        canvas.getContext("2d").drawImage(img,0,0,width,height);
+        canvas.toBlob(blob=>blob?resolve(blob):reject(new Error("No se pudo procesar la imagen.")),"image/jpeg",quality);
+      };img.onerror=()=>reject(new Error("Imagen inválida."));img.src=e.target.result;};
+      reader.onerror=()=>reject(new Error("No se pudo leer el archivo."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function loadMyTasks(){
+    if(!currentUser) return;
+    setLoadingTasks(true);
+    const today=new Date().toISOString().slice(0,10);
+    const {data}=await supabase.from("task_assignments").select("*").eq("employee_id",currentUser.employeeId).eq("task_date",today).order("created_at",{ascending:true});
+    if(data) setMyTasks(data);
+    setLoadingTasks(false);
+  }
+
+  async function handleCompleteTask(task,file){
+    if(!file) return;
+    setTaskUploadError("");
+    setUploadingTaskId(task.id);
+    try{
+      const blob=await compressImage(file);
+      const path=`${task.employee_id}/${task.id}-${Date.now()}.jpg`;
+      const {error:upErr}=await supabase.storage.from("task-photos").upload(path,blob,{contentType:"image/jpeg",upsert:true});
+      if(upErr) throw upErr;
+      const {data:pub}=supabase.storage.from("task-photos").getPublicUrl(path);
+      await supabase.from("task_assignments").update({status:"completada",photo_url:pub.publicUrl,completed_at:new Date().toISOString()}).eq("id",task.id);
+      await loadMyTasks();
+    }catch(err){
+      setTaskUploadError("No se pudo subir la foto. Intenta de nuevo.");
+      console.error("task photo upload error:",err);
+    }
+    setUploadingTaskId(null);
+  }
+
+  // ── ADMIN: asignar y ver tareas ───────────────────────────────────────────
+  async function loadAdminTasks(){
+    const {data}=await supabase.from("task_assignments").select("*").eq("task_date",adminTasksDate).order("store_id").order("employee_name");
+    if(data) setAdminTasksList(data);
+  }
+
+  function addAdminTaskItem(){setAdminTaskForm(f=>({...f,items:[...f.items,""]}));}
+  function removeAdminTaskItem(i){setAdminTaskForm(f=>({...f,items:f.items.filter((_,idx)=>idx!==i)}));}
+  function updateAdminTaskItem(i,val){setAdminTaskForm(f=>({...f,items:f.items.map((it,idx)=>idx===i?val:it)}));}
+
+  async function handleAssignTasks(){
+    const descs=adminTaskForm.items.map(t=>t.trim()).filter(Boolean);
+    if(!adminTaskForm.employeeId||!descs.length) return;
+    setAssigningTasks(true);
+    const emp=employees.find(e=>e.id===adminTaskForm.employeeId);
+    if(!emp){setAssigningTasks(false);return;}
+    const rows=descs.map(description=>({employee_id:emp.id,employee_name:emp.full_name,store_id:emp.store_id,store_name:emp.store_name,task_date:adminTaskForm.date,description,assigned_by:currentUser?.username||"admin"}));
+    await supabase.from("task_assignments").insert(rows);
+    setAdminTaskForm(f=>({...f,items:[""]}));
+    setAdminTasksDate(adminTaskForm.date);
+    await loadAdminTasks();
+    setAssigningTasks(false);
+  }
+
+  async function handleDeleteTask(id){
+    await supabase.from("task_assignments").delete().eq("id",id);
+    await loadAdminTasks();
   }
 
   // ── AUTH: LOGIN ────────────────────────────────────────────────────────────
@@ -382,7 +471,7 @@ export default function App() {
         setCheckState(s=>({...s,searching:false,result:{success:true,rec}}));
       },
       ()=>setCheckState(s=>({...s,searching:false,result:{error:"No se pudo obtener tu ubicación."}})),
-      {enableHighAccuracy:true,timeout:15000}
+      {enableHighAccuracy:true,timeout:10000,maximumAge:30000}
     );
   }
 
@@ -439,7 +528,7 @@ export default function App() {
         }
       },
       ()=>setCheckState(s=>({...s,searching:false,result:{error:"No se pudo obtener tu ubicación."}})),
-      {enableHighAccuracy:true,timeout:15000}
+      {enableHighAccuracy:true,timeout:10000,maximumAge:30000}
     );
   }
 
@@ -746,6 +835,39 @@ export default function App() {
           )}
         </>)}
 
+        {/* TAREAS (empleado) */}
+        {tab==="tareas"&&(<>
+          <div className="card">
+            <div className="card-title">Tareas de hoy — {now.toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"short"})}</div>
+            {loadingTasks&&<div style={{textAlign:"center",color:p.gray,fontSize:13,padding:"10px 0"}}>Cargando...</div>}
+            {!loadingTasks&&!myTasks.length&&<div style={{textAlign:"center",color:p.gray,fontSize:13,padding:"20px 0"}}>No tienes tareas asignadas para hoy.</div>}
+            {taskUploadError&&<div className="info-box info-red">{taskUploadError}</div>}
+            {myTasks.map(t=>(
+              <div key={t.id} className="rec-row">
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+                  <div style={{flex:1}}>
+                    <div className="rec-name">{t.description}</div>
+                    {t.status==="completada"&&t.completed_at&&<div className="rec-meta">✅ Completada · {new Date(t.completed_at).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"})}</div>}
+                  </div>
+                  <span className={`badge ${t.status==="completada"?"badge-green":"badge-amber"}`}>{t.status==="completada"?"Hecha":"Pendiente"}</span>
+                </div>
+                {t.status==="completada"&&t.photo_url&&(
+                  <img src={t.photo_url} className="photo-preview" alt="evidencia" style={{marginTop:8,cursor:"pointer"}} onClick={()=>setTaskPhotoModal(t.photo_url)} />
+                )}
+                {t.status!=="completada"&&(
+                  <div style={{marginTop:8}}>
+                    <input type="file" accept="image/*" capture="environment" id={`task-photo-${t.id}`} style={{display:"none"}}
+                      onChange={e=>handleCompleteTask(t,e.target.files?.[0])} />
+                    <label htmlFor={`task-photo-${t.id}`} className="photo-btn" style={{marginBottom:0}}>
+                      {uploadingTaskId===t.id?"Subiendo...":"📷 Subir foto y completar"}
+                    </label>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </>)}
+
         {/* PROFILE */}
         {tab==="profile"&&currentUser&&(<>
           <div className="card">
@@ -810,10 +932,10 @@ export default function App() {
           </div>
 
           <div className="tab-row">
-            {["hoy","cortes","empleados","digest"].map(t=>(
+            {["hoy","cortes","empleados","tareas","digest"].map(t=>(
               <button key={t} className="tab-btn" onClick={()=>setAdminTab(t)}
                 style={{background:adminTab===t?p.coffee:"white",color:adminTab===t?p.cream:p.coffee,border:`1.5px solid ${adminTab===t?p.coffee:p.foam}`,fontSize:11}}>
-                {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":"Digest"}
+                {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":t==="tareas"?"Tareas":"Digest"}
               </button>
             ))}
           </div>
@@ -1014,6 +1136,69 @@ export default function App() {
             </div>
           </>)}
 
+          {/* TAREAS (admin) */}
+          {!loadingAdmin&&adminTab==="tareas"&&(<>
+            <div className="card">
+              <div className="card-title">📋 Asignar tareas</div>
+              <label>Empleado</label>
+              <select value={adminTaskForm.employeeId} onChange={e=>setAdminTaskForm(f=>({...f,employeeId:e.target.value}))}>
+                <option value="">Selecciona empleado</option>
+                {STORES.map(store=>{
+                  const emps=employees.filter(e=>e.store_id===store.id);
+                  if(!emps.length) return null;
+                  return <optgroup key={store.id} label={store.name}>{emps.map(e=><option key={e.id} value={e.id}>{e.full_name}</option>)}</optgroup>;
+                })}
+              </select>
+              <label>Fecha</label>
+              <input type="text" value={adminTaskForm.date} onChange={e=>setAdminTaskForm(f=>({...f,date:e.target.value}))} placeholder="AAAA-MM-DD" />
+              <label>Funciones / tareas del turno</label>
+              {adminTaskForm.items.map((it,i)=>(
+                <div key={i} className="expense-row">
+                  <input type="text" placeholder={`Tarea ${i+1} (ej. limpiar barra)`} value={it} onChange={e=>updateAdminTaskItem(i,e.target.value)} />
+                  {adminTaskForm.items.length>1&&<button className="remove-btn" onClick={()=>removeAdminTaskItem(i)}>✕</button>}
+                </div>
+              ))}
+              <button className="btn btn-secondary" onClick={addAdminTaskItem} style={{marginTop:0,marginBottom:13}}>+ Agregar otra tarea</button>
+              <button className="btn btn-primary" disabled={!adminTaskForm.employeeId||!adminTaskForm.items.some(t=>t.trim())||assigningTasks} onClick={handleAssignTasks}>
+                {assigningTasks?"Asignando...":"Asignar tareas"}
+              </button>
+            </div>
+
+            <div className="card">
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                <div className="card-title" style={{margin:0}}>Tareas asignadas</div>
+                <input type="text" value={adminTasksDate} onChange={e=>setAdminTasksDate(e.target.value)} placeholder="AAAA-MM-DD"
+                  style={{width:"auto",padding:"6px 10px",fontSize:12,marginBottom:0}} />
+              </div>
+              {!adminTasksList.length&&<div style={{textAlign:"center",color:p.gray,fontSize:13,padding:"20px 0"}}>Sin tareas asignadas en esta fecha.</div>}
+              {STORES.map(store=>{
+                const st=adminTasksList.filter(t=>t.store_id===store.id);
+                if(!st.length) return null;
+                return(
+                  <div key={store.id} style={{marginBottom:16}}>
+                    <div className="section-title">{store.name}</div>
+                    {st.map(t=>(
+                      <div key={t.id} className="rec-row">
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                          <div style={{flex:1}}>
+                            <div className="rec-name">{t.employee_name}</div>
+                            <div className="rec-meta">{t.description}</div>
+                            {t.status==="completada"&&t.completed_at&&<div className="rec-meta">✅ {new Date(t.completed_at).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"})}</div>}
+                          </div>
+                          <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end"}}>
+                            <span className={`badge ${t.status==="completada"?"badge-green":"badge-amber"}`}>{t.status==="completada"?"Hecha":"Pendiente"}</span>
+                            <button onClick={()=>handleDeleteTask(t.id)} style={{fontSize:11,background:"none",border:"none",color:p.red,cursor:"pointer"}}>Eliminar</button>
+                          </div>
+                        </div>
+                        {t.photo_url&&<img src={t.photo_url} className="photo-preview" alt="evidencia" style={{marginTop:8,cursor:"pointer",maxHeight:120}} onClick={()=>setTaskPhotoModal(t.photo_url)} />}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          </>)}
+
           {/* DIGEST */}
           {!loadingAdmin&&adminTab==="digest"&&(
             <div className="card">
@@ -1034,12 +1219,17 @@ export default function App() {
 
       </div>
       <nav className="nav">
-        {[{key:"check",icon:"📍",label:"Checar"},{key:"profile",icon:"👤",label:"Mi perfil"},{key:"admin",icon:"📊",label:"Admin"}].map(t=>(
+        {[{key:"check",icon:"📍",label:"Checar"},{key:"tareas",icon:"📋",label:"Tareas"},{key:"profile",icon:"👤",label:"Mi perfil"},{key:"admin",icon:"📊",label:"Admin"}].map(t=>(
           <button key={t.key} className={`nav-btn ${tab===t.key?"active":""}`} onClick={()=>setTab(t.key)}>
             <span className="nav-icon">{t.icon}</span>{t.label}
           </button>
         ))}
       </nav>
+      {taskPhotoModal&&(
+        <div onClick={()=>setTaskPhotoModal(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <img src={taskPhotoModal} alt="evidencia" style={{maxWidth:"100%",maxHeight:"85vh",borderRadius:10}} />
+        </div>
+      )}
     </div></>
   );
 }
