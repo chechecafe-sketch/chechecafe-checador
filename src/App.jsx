@@ -20,7 +20,10 @@ const LATE_MINUTES = 15;
 const CAPUCHINO_PRICE = 66;
 const ADMIN_PIN = "5366";
 const BYPASS_USERS = ["elmaschingon", "fernanda.hughes", "victoria.santamaria", "luis.gutierrez2", "luis.gutierrez"];
+// Derecho de veto / admin completo (cortes, empleados, digest)
 const SUPER_ADMIN_USERS = ["fernanda.hughes", "victoria.santamaria", "luis.gutierrez2", "luis.gutierrez"];
+// Gerentes: pueden asignar tareas del día pero NO tienen derecho de veto ni ven cortes/empleados/digest
+const MANAGER_USERS = ["miriam.valentino1", "omar.rivera", "magali.gomez", "monserrath.rodriguez", "mariana.zavala"];
 
 const APPROVED_EXPENSE_KEYWORDS = ["café","cafe","leche","hielo","azúcar","azucar","servilleta","vaso","tapa","popote","limpieza","detergente","papel","bolsa","agua","propina"];
 
@@ -263,13 +266,32 @@ export default function App() {
   const [assigningTasks, setAssigningTasks] = useState(false);
   const [taskPhotoModal, setTaskPhotoModal] = useState(null);
 
+  const isSuperAdmin = !!currentUser && SUPER_ADMIN_USERS.includes(currentUser.username);
+  const isManager = !!currentUser && MANAGER_USERS.includes(currentUser.username);
+
   useEffect(()=>{
-    if(currentUser) { setScreen("main"); loadMyRecords(); loadStats(); loadAllCuts(); loadMyTasks(); if(SUPER_ADMIN_USERS.includes(currentUser.username)) { setAdminUnlocked(true); } }
+    if(currentUser) {
+      setScreen("main"); loadMyRecords(); loadStats(); loadAllCuts(); loadMyTasks();
+      if(SUPER_ADMIN_USERS.includes(currentUser.username)) { setAdminUnlocked(true); }
+      else if(MANAGER_USERS.includes(currentUser.username)) { setAdminUnlocked(true); setAdminTab("tareas"); }
+    }
     else setScreen("auth");
   },[currentUser]);
 
-  // Auto-refresh admin data every 30s
-  useEffect(()=>{ if(adminUnlocked) loadAdminData(); },[adminUnlocked]);
+  // Gerentes y super admins entran directo a Admin sin PIN, incluso si lo cerraron antes
+  useEffect(()=>{
+    if(tab==="admin"&&!adminUnlocked&&currentUser&&(SUPER_ADMIN_USERS.includes(currentUser.username)||MANAGER_USERS.includes(currentUser.username))){
+      setAdminUnlocked(true);
+      if(MANAGER_USERS.includes(currentUser.username)) setAdminTab("tareas");
+    }
+  },[tab]);
+
+  // Auto-refresh admin data every 30s — los gerentes solo cargan la lista de empleados (sin cortes/registros financieros)
+  useEffect(()=>{
+    if(!adminUnlocked) return;
+    if(isSuperAdmin) loadAdminData();
+    else if(isManager) loadManagerEmployees();
+  },[adminUnlocked]);
 
   useEffect(()=>{ if(adminUnlocked&&adminTab==="tareas") loadAdminTasks(); },[adminUnlocked,adminTab,adminTasksDate]);
 
@@ -305,6 +327,15 @@ export default function App() {
     if(emps) setEmployees(emps);
     if(recs) setRecords(recs);
     if(cutsData){setCuts(cutsData);setAllCuts(cutsData);}if(cutsErr)console.error("cuts error:",JSON.stringify(cutsErr));
+    setLoadingAdmin(false);
+  }
+
+  // Gerentes (sin derecho de veto): solo necesitan la lista de empleados para asignar tareas,
+  // no cargan cortes de caja ni el detalle de registros de asistencia.
+  async function loadManagerEmployees() {
+    setLoadingAdmin(true);
+    const {data:emps}=await supabase.from("employees").select("id,full_name,store_id,store_name").order("store_id");
+    if(emps) setEmployees(emps);
     setLoadingAdmin(false);
   }
 
@@ -927,12 +958,14 @@ export default function App() {
 
         {tab==="admin"&&adminUnlocked&&(<>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            
-            <button onClick={loadAdminData} style={{fontSize:12,background:"none",border:"none",color:p.caramel,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>↻ Actualizar ahora</button>
+
+            <button onClick={()=>{if(isSuperAdmin)loadAdminData();else loadManagerEmployees();}} style={{fontSize:12,background:"none",border:"none",color:p.caramel,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>↻ Actualizar ahora</button>
           </div>
 
+          {isManager&&!isSuperAdmin&&<div className="info-box info-blue">Acceso de gerente — puedes asignar tareas del turno. Solo Luis, Fernanda y Victoria tienen acceso a cortes, empleados y derecho de veto.</div>}
+
           <div className="tab-row">
-            {["hoy","cortes","empleados","tareas","digest"].map(t=>(
+            {(isSuperAdmin?["hoy","cortes","empleados","tareas","digest"]:["tareas"]).map(t=>(
               <button key={t} className="tab-btn" onClick={()=>setAdminTab(t)}
                 style={{background:adminTab===t?p.coffee:"white",color:adminTab===t?p.cream:p.coffee,border:`1.5px solid ${adminTab===t?p.coffee:p.foam}`,fontSize:11}}>
                 {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":t==="tareas"?"Tareas":"Digest"}
@@ -943,7 +976,7 @@ export default function App() {
           {loadingAdmin&&<div style={{textAlign:"center",padding:"40px 0",color:p.gray}}>Cargando...</div>}
 
           {/* HOY */}
-          {!loadingAdmin&&adminTab==="hoy"&&(
+          {!loadingAdmin&&isSuperAdmin&&adminTab==="hoy"&&(
             <div className="card">
               <div className="card-title">Registros de hoy — {now.toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long"})}</div>
               {STORES.map(store=>{
@@ -983,7 +1016,7 @@ export default function App() {
           )}
 
           {/* CORTES */}
-          {!loadingAdmin&&adminTab==="cortes"&&(
+          {!loadingAdmin&&isSuperAdmin&&adminTab==="cortes"&&(
             <div className="card">
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
                 <div className="card-title" style={{margin:0}}>Cortes de turno</div>
@@ -1071,7 +1104,7 @@ export default function App() {
           )}
 
           {/* EMPLEADOS */}
-          {!loadingAdmin&&adminTab==="empleados"&&(<>
+          {!loadingAdmin&&isSuperAdmin&&adminTab==="empleados"&&(<>
             <div className="card">
               <div className="card-title">➕ Crear empleado</div>
               <label>Nombre completo</label>
@@ -1200,7 +1233,7 @@ export default function App() {
           </>)}
 
           {/* DIGEST */}
-          {!loadingAdmin&&adminTab==="digest"&&(
+          {!loadingAdmin&&isSuperAdmin&&adminTab==="digest"&&(
             <div className="card">
               <div className="card-title">Digest de asistencia</div>
               <div style={{fontSize:13,color:p.gray,marginBottom:16}}>Envía resumen por tienda a los correos admin.</div>
