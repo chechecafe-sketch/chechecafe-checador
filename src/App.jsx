@@ -119,10 +119,10 @@ function getTipsMessage(ranking,myPos,myStore,leader) {
   const capuchinos=Math.ceil(diff/CAPUCHINO_PRICE);
   if(myPos===0&&ranking.length>1) {
     const second=ranking[1],capLead=Math.ceil((myStore.tips-second.tips)/CAPUCHINO_PRICE);
-    return {emoji:"🏆",color:"#2E7D32",bg:"#E8F5E9",msg:`¡${myStore.name} va en primer lugar este mes con ${formatCurrency(myStore.tips)} en propinas!`,sub:`${second.name} te persigue — llevas ${capLead} capuchinos de ventaja. No te duermas. ☕`};
+    return {emoji:"🏆",color:"#5F7350",bg:"#EEF0E6",msg:`¡${myStore.name} va en primer lugar este mes con ${formatCurrency(myStore.tips)} en propinas!`,sub:`${second.name} te persigue — llevas ${capLead} capuchinos de ventaja. No te duermas. ☕`};
   }
-  if(myPos===1) return {emoji:"🥈",color:"#E65100",bg:"#FFF3E0",msg:`Vas en segundo lugar con ${formatCurrency(myStore.tips)} en propinas.`,sub:`Para quitarle el primero a ${leader.name} necesitarías vender ${capuchinos} capuchinos más. ¡Ándale! ☕`};
-  return {emoji:"📈",color:"#1565C0",bg:"#E3F2FD",msg:`${myStore.name} lleva ${formatCurrency(myStore.tips)} en propinas. Lugar #${myPos+1}.`,sub:`Para alcanzar a ${leader.name} (${formatCurrency(leader.tips)}) necesitarías vender ${capuchinos} capuchinos. ¡A darle! ☕`};
+  if(myPos===1) return {emoji:"🥈",color:"#B3792E",bg:"#F8F1E1",msg:`Vas en segundo lugar con ${formatCurrency(myStore.tips)} en propinas.`,sub:`Para quitarle el primero a ${leader.name} necesitarías vender ${capuchinos} capuchinos más. ¡Ándale! ☕`};
+  return {emoji:"📈",color:"#5B7B87",bg:"#E9EFEE",msg:`${myStore.name} lleva ${formatCurrency(myStore.tips)} en propinas. Lugar #${myPos+1}.`,sub:`Para alcanzar a ${leader.name} (${formatCurrency(leader.tips)}) necesitarías vender ${capuchinos} capuchinos. ¡A darle! ☕`};
 }
 
 function getLS(k,fb){try{return JSON.parse(localStorage.getItem(k))??fb;}catch{return fb;}}
@@ -137,42 +137,48 @@ async function hashPassword(password) {
   return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-const p={coffee:"#3B1F0E",cream:"#F5EDD7",caramel:"#C8862A",espresso:"#1A0A02",milk:"#FDF8EE",foam:"#EDE0C4",green:"#2E7D32",red:"#C62828",amber:"#E65100",gray:"#6D6D6D",blue:"#1565C0"};
+const p={coffee:"#3A3826",cream:"#F7F2E6",caramel:"#AD7952",espresso:"#241F16",milk:"#F3EEE1",foam:"#E6DFCB",green:"#5F7350",red:"#B5502F",amber:"#B3792E",gray:"#8C876F",blue:"#5B7B87",sage:"#8A8A66"};
 
 const css=`
-  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
   html,body,#root{height:100%;}
   body{font-family:'DM Sans',sans-serif;background:${p.milk};color:${p.espresso};}
   .app{max-width:430px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;}
-  .header{background:${p.coffee};color:${p.cream};padding:20px 20px 16px;text-align:center;flex-shrink:0;}
-  .header h1{font-family:'Playfair Display',serif;font-size:22px;letter-spacing:0.5px;}
-  .header p{font-size:12px;color:${p.foam};margin-top:3px;opacity:0.8;}
+  .header{background:${p.coffee};color:${p.cream};padding:22px 20px 18px;text-align:center;flex-shrink:0;}
+  .header h1{font-family:'Playfair Display',serif;font-size:23px;letter-spacing:0.3px;font-weight:600;}
+  .header-logo{height:30px;width:auto;display:inline-block;}
+  .header p{font-size:12px;color:${p.foam};margin-top:4px;opacity:0.85;letter-spacing:0.2px;}
   .content{flex:1;padding:18px 16px 80px;overflow-y:auto;}
-  .card{background:white;border-radius:14px;padding:18px;margin-bottom:14px;box-shadow:0 2px 12px rgba(59,31,14,0.07);}
-  .card-title{font-family:'Playfair Display',serif;font-size:17px;color:${p.coffee};margin-bottom:14px;}
-  label{font-size:12px;font-weight:500;color:${p.gray};display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px;}
+  .card{background:#FFFDF8;border-radius:22px;padding:20px;margin-bottom:14px;box-shadow:0 4px 24px rgba(58,56,38,0.08);}
+  .card-title{font-family:'Playfair Display',serif;font-size:18px;color:${p.coffee};margin-bottom:14px;font-weight:600;}
+  label{font-size:11px;font-weight:600;color:${p.gray};display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.6px;}
   select,input[type=text],input[type=email],input[type=password],input[type=number],textarea{
-    width:100%;padding:11px 13px;border:1.5px solid ${p.foam};border-radius:10px;
+    width:100%;padding:12px 14px;border:1.5px solid ${p.foam};border-radius:14px;
     font-family:'DM Sans',sans-serif;font-size:15px;background:${p.milk};
     color:${p.espresso};margin-bottom:13px;outline:none;transition:border 0.2s;appearance:none;}
   textarea{resize:none;min-height:80px;}
   select:focus,input:focus,textarea:focus{border-color:${p.caramel};}
-  .btn{width:100%;padding:13px;border:none;border-radius:12px;font-family:'DM Sans',sans-serif;font-size:15px;font-weight:500;cursor:pointer;transition:all 0.15s;}
+  .btn{width:100%;padding:14px;border:none;border-radius:16px;font-family:'DM Sans',sans-serif;font-size:15px;font-weight:500;cursor:pointer;transition:all 0.15s;}
   .btn-primary{background:${p.coffee};color:${p.cream};}
   .btn-primary:hover{background:${p.espresso};}
   .btn-primary:disabled{background:#ccc;cursor:not-allowed;}
   .btn-secondary{background:${p.foam};color:${p.coffee};margin-top:10px;}
-  .btn-check{background:${p.caramel};color:white;font-size:16px;padding:16px;}
-  .btn-checkout{background:${p.espresso};color:${p.cream};font-size:16px;padding:16px;margin-top:10px;}
+  .btn-check{background:${p.caramel};color:white;font-size:16px;padding:17px;}
+  .btn-checkout{background:${p.espresso};color:${p.cream};font-size:16px;padding:17px;margin-top:10px;}
   .btn-check:disabled,.btn-checkout:disabled{background:#ccc;cursor:not-allowed;}
-  .btn-choice{flex:1;padding:16px;border:2px solid ${p.foam};border-radius:12px;background:white;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:all 0.15s;color:${p.espresso};}
+  .hero-check-btn{width:118px;height:118px;border-radius:50%;border:none;background:${p.caramel};color:white;font-size:34px;cursor:pointer;display:flex;align-items:center;justify-content:center;margin:6px auto 12px;box-shadow:0 10px 28px rgba(173,121,82,0.38);transition:transform 0.15s;}
+  .hero-check-btn:active{transform:scale(0.96);}
+  .hero-check-btn:disabled{background:#ccc;box-shadow:none;cursor:not-allowed;}
+  .hero-check-label{text-align:center;font-weight:600;font-size:14px;color:${p.espresso};margin-bottom:4px;}
+  .icon-pill{width:38px;height:38px;border-radius:50%;background:${p.sage};display:flex;align-items:center;justify-content:center;flex-shrink:0;color:white;font-size:16px;}
+  .btn-choice{flex:1;padding:16px;border:2px solid ${p.foam};border-radius:16px;background:white;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:all 0.15s;color:${p.espresso};}
   .btn-choice.selected{border-color:${p.coffee};background:${p.coffee};color:${p.cream};}
-  .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:12px;font-weight:500;}
-  .badge-green{background:#E8F5E9;color:${p.green};}
-  .badge-red{background:#FFEBEE;color:${p.red};}
-  .badge-amber{background:#FFF3E0;color:${p.amber};}
-  .badge-blue{background:#E3F2FD;color:${p.blue};}
+  .badge{display:inline-block;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:500;}
+  .badge-green{background:#EBEEE2;color:${p.green};}
+  .badge-red{background:#F7EAE4;color:${p.red};}
+  .badge-amber{background:#F7EFDF;color:${p.amber};}
+  .badge-blue{background:#E9EFEE;color:${p.blue};}
   .stat-row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid ${p.foam};}
   .stat-row:last-child{border-bottom:none;}
   .stat-label{font-size:13px;color:${p.gray};}
@@ -181,35 +187,35 @@ const css=`
   .nav-btn{flex:1;padding:12px 4px;border:none;background:transparent;color:${p.foam};font-size:11px;font-family:'DM Sans',sans-serif;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;transition:background 0.15s;}
   .nav-btn.active{background:rgba(255,255,255,0.13);color:white;}
   .nav-icon{font-size:17px;}
-  .info-box{border-left:4px solid;border-radius:0 10px 10px 0;padding:11px 13px;margin-bottom:13px;font-size:13px;line-height:1.6;}
-  .info-green{background:#E8F5E9;border-color:${p.green};color:#1B5E20;}
-  .info-amber{background:#FFF8E1;border-color:${p.amber};color:#5D4037;}
-  .info-red{background:#FFEBEE;border-color:${p.red};color:#B71C1C;}
-  .info-blue{background:#E3F2FD;border-color:${p.blue};color:${p.blue};}
+  .info-box{border-left:4px solid;border-radius:0 14px 14px 0;padding:12px 14px;margin-bottom:13px;font-size:13px;line-height:1.6;}
+  .info-green{background:#EEF0E6;border-color:${p.green};color:#3E4A2E;}
+  .info-amber{background:#F8F1E1;border-color:${p.amber};color:#5D4620;}
+  .info-red{background:#F8ECE7;border-color:${p.red};color:#7A331E;}
+  .info-blue{background:#E9EFEE;border-color:${p.blue};color:${p.blue};}
   .rec-row{padding:10px 0;border-bottom:1px solid ${p.foam};}
   .rec-row:last-child{border-bottom:none;}
   .rec-name{font-weight:500;font-size:14px;}
   .rec-meta{font-size:12px;color:${p.gray};margin-top:2px;}
-  .id-badge{font-family:monospace;font-size:18px;letter-spacing:2px;background:${p.foam};padding:12px 20px;border-radius:10px;text-align:center;color:${p.coffee};font-weight:700;}
-  .username-badge{font-family:monospace;font-size:16px;background:#E3F2FD;padding:10px 16px;border-radius:10px;text-align:center;color:${p.blue};font-weight:700;margin-bottom:14px;}
+  .id-badge{font-family:monospace;font-size:18px;letter-spacing:2px;background:${p.foam};padding:12px 20px;border-radius:14px;text-align:center;color:${p.coffee};font-weight:700;}
+  .username-badge{font-family:monospace;font-size:16px;background:#E9EFEE;padding:10px 16px;border-radius:14px;text-align:center;color:${p.blue};font-weight:700;margin-bottom:14px;}
   .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;}
   .mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;}
-  .mini-card{background:${p.milk};border-radius:8px;padding:8px 6px;text-align:center;}
+  .mini-card{background:${p.milk};border-radius:12px;padding:8px 6px;text-align:center;}
   .mini-val{font-size:15px;font-weight:500;color:${p.coffee};}
   .mini-lbl{font-size:10px;color:${p.gray};text-transform:uppercase;letter-spacing:0.3px;margin-top:2px;}
-  .section-title{font-size:11px;font-weight:500;color:${p.gray};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;}
+  .section-title{font-size:11px;font-weight:600;color:${p.gray};text-transform:uppercase;letter-spacing:0.6px;margin-bottom:10px;}
   .tab-row{display:flex;gap:6px;margin-bottom:16px;}
-  .tab-btn{flex:1;padding:8px 4px;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:all 0.15s;}
+  .tab-btn{flex:1;padding:9px 4px;border-radius:12px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:all 0.15s;}
   .expense-row{display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;}
   .expense-row input{margin-bottom:0;}
-  .remove-btn{background:${p.foam};border:none;border-radius:8px;padding:11px 14px;cursor:pointer;font-size:16px;flex-shrink:0;}
-  .photo-preview{width:100%;border-radius:10px;margin-bottom:10px;max-height:200px;object-fit:cover;}
-  .photo-btn{width:100%;padding:13px;border:2px dashed ${p.foam};border-radius:12px;background:${p.milk};color:${p.gray};font-family:'DM Sans',sans-serif;font-size:14px;cursor:pointer;text-align:center;margin-bottom:13px;}
-  .tips-card{border-radius:14px;padding:16px;margin-bottom:14px;}
+  .remove-btn{background:${p.foam};border:none;border-radius:12px;padding:11px 14px;cursor:pointer;font-size:16px;flex-shrink:0;}
+  .photo-preview{width:100%;border-radius:14px;margin-bottom:10px;max-height:200px;object-fit:cover;}
+  .photo-btn{width:100%;padding:13px;border:2px dashed ${p.foam};border-radius:16px;background:${p.milk};color:${p.gray};font-family:'DM Sans',sans-serif;font-size:14px;cursor:pointer;text-align:center;margin-bottom:13px;}
+  .tips-card{border-radius:20px;padding:16px;margin-bottom:14px;}
   .tips-rank-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(0,0,0,0.06);}
   .tips-rank-row:last-child{border-bottom:none;}
-  .redFlag{background:#FFEBEE;border:2px solid ${p.red};border-radius:12px;padding:16px;margin-bottom:14px;}
-  .new-emp-card{border:2px solid ${p.green};border-radius:12px;padding:14px;margin-bottom:10px;background:#F1F8E9;}
+  .redFlag{background:#F8ECE7;border:2px solid ${p.red};border-radius:16px;padding:16px;margin-bottom:14px;}
+  .new-emp-card{border:2px solid ${p.green};border-radius:16px;padding:14px;margin-bottom:10px;background:#EEF0E6;}
 `;
 
 export default function App() {
@@ -721,7 +727,7 @@ export default function App() {
   // ── LOADING ───────────────────────────────────────────────────────────────
   if(screen==="loading") return(
     <><style>{css}</style>
-    <div className="app"><div className="header"><h1>☕ Che Che Café</h1></div>
+    <div className="app"><div className="header"><img src="/logo-cream.png" alt="Che Che Café" className="header-logo" /></div>
     <div className="content" style={{display:"flex",alignItems:"center",justifyContent:"center",flex:1}}>
       <div style={{textAlign:"center",color:p.gray}}>Cargando...</div>
     </div></div></>
@@ -731,10 +737,10 @@ export default function App() {
   if(screen==="auth") return(
     <><style>{css}</style>
     <div className="app">
-      <div className="header"><h1>☕ Che Che Café</h1><p>Sistema de Asistencia</p></div>
+      <div className="header"><img src="/logo-cream.png" alt="Che Che Café" className="header-logo" /><p>Sistema de Asistencia</p></div>
       <div className="content">
         <div style={{textAlign:"center",padding:"24px 0 28px"}}>
-          <div style={{fontSize:56,marginBottom:10}}>☕</div>
+          <img src="/logo-black.png" alt="Che Che Café" style={{height:54,width:"auto",marginBottom:14}} />
           <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,color:p.coffee,marginBottom:6}}>
             {authMode==="login"?"Bienvenido de vuelta":"Primera vez — crea tu contraseña"}
           </div>
@@ -792,7 +798,7 @@ export default function App() {
   if(tab==="check"&&checkoutStep==="form") return(
     <><style>{css}</style>
     <div className="app">
-      <div className="header"><h1>☕ Che Che Café</h1><p>Corte de turno — Obligatorio</p></div>
+      <div className="header"><img src="/logo-cream.png" alt="Che Che Café" className="header-logo" /><p>Corte de turno — Obligatorio</p></div>
       <div className="content">
         {earlyLeaveWarning&&(
           <div className="redFlag">
@@ -867,7 +873,7 @@ export default function App() {
   if(tab==="check"&&checkoutStep==="done") return(
     <><style>{css}</style>
     <div className="app">
-      <div className="header"><h1>☕ Che Che Café</h1><p>Turno finalizado</p></div>
+      <div className="header"><img src="/logo-cream.png" alt="Che Che Café" className="header-logo" /><p>Turno finalizado</p></div>
       <div className="content">
         <div className="card" style={{textAlign:"center"}}>
           <div style={{fontSize:52,margin:"10px 0 14px"}}>✅</div>
@@ -893,7 +899,7 @@ export default function App() {
     <><style>{css}</style>
     <div className="app">
       <div className="header">
-        <h1>☕ Che Che Café</h1>
+        <img src="/logo-cream.png" alt="Che Che Café" className="header-logo" />
         {currentUser&&<p>{currentUser.fullName} · {currentUser.storeName}</p>}
       </div>
       <div className="content">
@@ -923,18 +929,23 @@ export default function App() {
             </div>
           ):(
             <div className="card">
-              <div className="card-title">Registro de turno</div>
-              <div style={{background:p.milk,borderRadius:10,padding:"10px 14px",marginBottom:14}}>
-                <div style={{fontSize:12,color:p.gray}}>Registrado como</div>
-                <div style={{fontWeight:500,fontSize:15,color:p.coffee}}>{currentUser?.fullName}</div>
-                <div style={{fontSize:12,color:p.gray}}>{currentUser?.storeName} · @{currentUser?.username}</div>
+              <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+                <div className="icon-pill">📍</div>
+                <div>
+                  <div style={{fontSize:11,color:p.gray,textTransform:"uppercase",letterSpacing:"0.5px"}}>Registrado como</div>
+                  <div style={{fontFamily:"'Playfair Display',serif",fontWeight:600,fontSize:17,color:p.coffee}}>{currentUser?.fullName}</div>
+                  <div style={{fontSize:12,color:p.gray}}>{currentUser?.storeName} · @{currentUser?.username}</div>
+                </div>
               </div>
               {checkState.result?.error&&<div className="info-box info-red">{checkState.result.error}</div>}
-              <button className="btn btn-check" disabled={checkState.searching} onClick={handleCheckIn}>
-                {checkState.searching&&checkState.mode==="entrada"?"Verificando...":"📍 Check in — Entrada"}
-              </button>
+              <div style={{textAlign:"center"}}>
+                <button className="hero-check-btn" disabled={checkState.searching} onClick={handleCheckIn} aria-label="Check in">
+                  {checkState.searching&&checkState.mode==="entrada"?"…":"📍"}
+                </button>
+                <div className="hero-check-label">{checkState.searching&&checkState.mode==="entrada"?"Verificando...":"Marcar entrada"}</div>
+              </div>
               <button className="btn btn-checkout" disabled={checkState.searching} onClick={()=>{setCheckState(s=>({...s,mode:"salida"}));setEarlyLeaveWarning(null);handleCheckOut();}}>
-                {checkState.searching&&checkState.mode==="salida"?"Verificando...":"🚪 Check out — Salida"}
+                {checkState.searching&&checkState.mode==="salida"?"Verificando...":"🚪 Marcar salida"}
               </button>
               <div style={{fontSize:12,color:p.gray,textAlign:"center",marginTop:10}}>Debes estar dentro de {RADIUS_METERS}m de tu tienda</div>
             </div>
