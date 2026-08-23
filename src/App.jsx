@@ -23,7 +23,7 @@ const BYPASS_USERS = ["elmaschingon", "fernanda.hughes", "victoria.santamaria", 
 // Derecho de veto / admin completo (cortes, empleados, digest)
 const SUPER_ADMIN_USERS = ["fernanda.hughes", "victoria.santamaria", "luis.gutierrez2", "luis.gutierrez"];
 // Gerentes: pueden asignar tareas del día pero NO tienen derecho de veto ni ven cortes/empleados/digest
-const MANAGER_USERS = ["miriam.valentino1", "omar.rivera", "magali.gomez", "monserrath.rodriguez", "mariana.zavala"];
+const MANAGER_USERS = ["omar.rivera", "magali.gomez", "monserrath.rodriguez"];
 
 const APPROVED_EXPENSE_KEYWORDS = ["café","cafe","leche","hielo","azúcar","azucar","servilleta","vaso","tapa","popote","limpieza","detergente","papel","bolsa","agua","propina"];
 
@@ -229,6 +229,7 @@ export default function App() {
   const [checkoutStep, setCheckoutStep] = useState("select");
   const [isCajero, setIsCajero] = useState(false);
   const [cajerosDesignados, setCajerosDesignados] = useState({});
+  const [pendingShift, setPendingShift] = useState("");
   const [earlyLeaveWarning, setEarlyLeaveWarning] = useState(null);
   const [checkoutForm, setCheckoutForm] = useState({efectivo:"",tarjeta:"",gastos:[{concepto:"",monto:"",fotoPreview:null}],notas:""});
   const [cutError, setCutError] = useState("");
@@ -266,12 +267,23 @@ export default function App() {
   const [assigningTasks, setAssigningTasks] = useState(false);
   const [taskPhotoModal, setTaskPhotoModal] = useState(null);
 
+  // ── AVISOS / ALERTAS ──────────────────────────────────────────────────────
+  const [activeAlerts, setActiveAlerts] = useState([]); // banners a mostrar al empleado
+  const [adminAnnounceForm, setAdminAnnounceForm] = useState({message:"",audience:"todos",employeeId:""});
+  const [sendingAnnouncement, setSendingAnnouncement] = useState(false);
+  const [adminAnnouncementsList, setAdminAnnouncementsList] = useState([]);
+
   const isSuperAdmin = !!currentUser && SUPER_ADMIN_USERS.includes(currentUser.username);
   const isManager = !!currentUser && MANAGER_USERS.includes(currentUser.username);
 
   useEffect(()=>{
     if(currentUser) {
-      setScreen("main"); loadMyRecords(); loadStats(); loadAllCuts(); loadMyTasks();
+      setScreen("main"); loadMyRecords(); loadStats(); loadAllCuts();
+      (async()=>{
+        const tasks=await loadMyTasks();
+        const announcements=await loadAnnouncements();
+        checkAlertsAndNotify(tasks,announcements);
+      })();
       if(SUPER_ADMIN_USERS.includes(currentUser.username)) { setAdminUnlocked(true); }
       else if(MANAGER_USERS.includes(currentUser.username)) { setAdminUnlocked(true); setAdminTab("tareas"); }
     }
@@ -294,6 +306,7 @@ export default function App() {
   },[adminUnlocked]);
 
   useEffect(()=>{ if(adminUnlocked&&adminTab==="tareas") loadAdminTasks(); },[adminUnlocked,adminTab,adminTasksDate]);
+  useEffect(()=>{ if(adminUnlocked&&adminTab==="avisos") loadAdminAnnouncements(); },[adminUnlocked,adminTab]);
 
   async function loadMyRecords() {
     if(!currentUser) return;
@@ -359,12 +372,92 @@ export default function App() {
   }
 
   async function loadMyTasks(){
-    if(!currentUser) return;
+    if(!currentUser) return [];
     setLoadingTasks(true);
     const today=new Date().toISOString().slice(0,10);
     const {data}=await supabase.from("task_assignments").select("*").eq("employee_id",currentUser.employeeId).eq("task_date",today).order("created_at",{ascending:true});
     if(data) setMyTasks(data);
     setLoadingTasks(false);
+    return data||[];
+  }
+
+  // ── AVISOS: cargar, enviar y notificar (sonido + vibración) ──────────────
+  function playAlertSound(){
+    try{
+      const Ctx=window.AudioContext||window.webkitAudioContext;
+      if(!Ctx) return;
+      const ctx=new Ctx();
+      const beep=(freq,start,dur)=>{
+        const osc=ctx.createOscillator(), gain=ctx.createGain();
+        osc.type="square"; osc.frequency.value=freq; gain.gain.value=0.4;
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(ctx.currentTime+start); osc.stop(ctx.currentTime+start+dur);
+      };
+      beep(1100,0,0.16); beep(1100,0.22,0.16); beep(1100,0.44,0.28);
+    }catch{}
+  }
+  function vibrateAlert(){ try{ if(navigator.vibrate) navigator.vibrate([250,120,250,120,450]); }catch{} }
+
+  async function loadAnnouncements(){
+    const {data}=await supabase.from("announcements").select("*").order("created_at",{ascending:false}).limit(30);
+    const relevant=(data||[]).filter(a=>
+      a.audience==="todos"
+      ||((isManager||isSuperAdmin)&&a.audience==="gerentes")
+      ||(a.audience==="individual"&&a.employee_id===currentUser?.employeeId)
+    );
+    return relevant;
+  }
+
+  function checkAlertsAndNotify(tasks,announcements){
+    if(!currentUser) return;
+    const alerts=[];
+    const today=new Date().toISOString().slice(0,10);
+    const pendingCount=(tasks||[]).filter(t=>t.status!=="completada").length;
+    const taskAlertKey=`ccc_task_alert_${currentUser.employeeId}_${today}`;
+    if(pendingCount>0 && !getLS(taskAlertKey,false)){
+      alerts.push(`📋 Tienes ${pendingCount} tarea${pendingCount===1?"":"s"} pendiente${pendingCount===1?"":"s"} en tu jornada.`);
+      setLS(taskAlertKey,true);
+    }
+    const seenKey=`ccc_seen_announcements_${currentUser.employeeId}`;
+    const seenIds=getLS(seenKey,[]);
+    const nuevos=(announcements||[]).filter(a=>!seenIds.includes(a.id));
+    if(nuevos.length){
+      nuevos.forEach(a=>alerts.push(`📢 ${a.message}`));
+      setLS(seenKey,[...seenIds,...nuevos.map(a=>a.id)]);
+    }
+    if(alerts.length){
+      setActiveAlerts(alerts);
+      playAlertSound();
+      vibrateAlert();
+    }
+  }
+
+  async function handleSendAnnouncement(){
+    if(!adminAnnounceForm.message.trim()) return;
+    if(adminAnnounceForm.audience==="individual"&&!adminAnnounceForm.employeeId) return;
+    setSendingAnnouncement(true);
+    const row={message:adminAnnounceForm.message.trim(),audience:adminAnnounceForm.audience,created_by:currentUser?.username||"admin"};
+    if(adminAnnounceForm.audience==="individual"){
+      const emp=employees.find(e=>e.id===adminAnnounceForm.employeeId);
+      row.employee_id=adminAnnounceForm.employeeId;
+      row.employee_name=emp?.full_name||"";
+    }
+    await supabase.from("announcements").insert(row);
+    setAdminAnnounceForm({message:"",audience:"todos",employeeId:""});
+    await loadAdminAnnouncements();
+    setSendingAnnouncement(false);
+  }
+
+  async function loadAdminAnnouncements(){
+    const {data}=await supabase.from("announcements").select("*").order("created_at",{ascending:false}).limit(30);
+    if(data) setAdminAnnouncementsList(data);
+  }
+
+  async function handleDeleteAnnouncement(id){
+    const a=adminAnnouncementsList.find(x=>x.id===id);
+    if(a&&a.audience==="individual"&&!isSuperAdmin&&a.created_by!==currentUser?.username) return; // no borrar mensajes privados ajenos
+    await supabase.from("announcements").delete().eq("id",id);
+    await loadAdminAnnouncements();
   }
 
   async function handleCompleteTask(task,file){
@@ -534,14 +627,15 @@ export default function App() {
           earlyMins = closeMin - nowMin;
         }
 
-        // Check if employee is designated cajero for this shift
+        // Check if employee is designated cajero for THIS turno específico (no de todo el día en la tienda)
         const shiftKey = `${currentUser.storeId}_${shift}_${today.toISOString().split("T")[0]}`;
-        const {data:existingCut}=await supabase.from("cuts").select("employee_id").eq("store_id",currentUser.storeId).gte("timestamp",today.toISOString()).limit(1);
-        const {data:shiftEntries}=await supabase.from("records").select("employee_id,employee_name").eq("store_id",currentUser.storeId).eq("type","entrada").eq("shift",shift).gte("timestamp",today.toISOString());
-        
-        // First person to check in this shift = designated cajero
+        const {data:existingCut}=await supabase.from("cuts").select("employee_id").eq("store_id",currentUser.storeId).eq("shift",shift).gte("timestamp",today.toISOString()).limit(1);
+        const {data:shiftEntries}=await supabase.from("records").select("employee_id,employee_name").eq("store_id",currentUser.storeId).eq("type","entrada").eq("shift",shift).gte("timestamp",today.toISOString()).order("timestamp",{ascending:true});
+
+        // Primera persona en checar entrada en ESTE turno (ordenado cronológicamente) = cajero designado
         const firstInShift = shiftEntries?.[0]?.employee_id;
         const amCajero = firstInShift === currentUser.employeeId && (!existingCut || existingCut.length===0);
+        setPendingShift(shift);
 
         const rec={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:store.name,timestamp:now.toISOString(),late_minutes:0,shift,note:earlyMins>0?`Salida anticipada: ${earlyMins} min antes`:"",type:"salida",distance:Math.round(dist)};
         await supabase.from("records").insert(rec);
@@ -582,7 +676,7 @@ export default function App() {
     const unapproved=gastosValidos.filter(g=>g.concepto&&!isApprovedExpense(g.concepto));
     const propinasGasto=gastosValidos.find(g=>g.concepto?.toLowerCase().includes("propina"));
     const propinas=parseFloat(propinasGasto?.monto)||0;
-    const cut={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:currentUser.storeName,timestamp:new Date().toISOString(),total_corte:totalCorte,efectivo,tarjeta,propinas,gastos:JSON.stringify(gastosValidos),total_gastos:totalEgresos,notas:checkoutForm.notas,tiene_gastos_no_aprobados:unapproved.length>0,es_cajero:true};
+    const cut={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:currentUser.storeName,timestamp:new Date().toISOString(),shift:pendingShift||null,total_corte:totalCorte,efectivo,tarjeta,propinas,gastos:JSON.stringify(gastosValidos),total_gastos:totalEgresos,notas:checkoutForm.notas,tiene_gastos_no_aprobados:unapproved.length>0,es_cajero:true};
     await supabase.from("cuts").insert(cut);
     fetch("/api/send-cut",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cut,employee:{full_name:currentUser.fullName}})}).catch(()=>{});
     if(unapproved.length>0) fetch("/api/notify-expense",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cut,employee:{full_name:currentUser.fullName},unapprovedExpenses:unapproved})}).catch(()=>{});
@@ -806,6 +900,12 @@ export default function App() {
 
         {/* CHECK */}
         {tab==="check"&&(<>
+          {activeAlerts.length>0&&(
+            <div className="card" style={{border:`2px solid ${p.caramel}`}}>
+              {activeAlerts.map((msg,i)=>(<div key={i} style={{fontSize:14,fontWeight:500,color:p.coffee,marginBottom:i<activeAlerts.length-1?8:0}}>{msg}</div>))}
+              <button className="btn btn-secondary" style={{marginTop:10}} onClick={()=>setActiveAlerts([])}>Entendido</button>
+            </div>
+          )}
           {period&&<div className="info-box info-green"><strong>Turno activo:</strong> {SCHEDULES[period.key].label} — {period.key==="intermedio"?"10:00–11:00 AM":(()=>{const t=SCHEDULES[period.key].getTime(now.getDay());return `${t.h}:${String(t.m).padStart(2,"0")}`;})()}</div>}
           {!period&&<div className="info-box info-amber">No hay turno activo en este momento.</div>}
           {checkState.result?.success?(
@@ -962,13 +1062,13 @@ export default function App() {
             <button onClick={()=>{if(isSuperAdmin)loadAdminData();else loadManagerEmployees();}} style={{fontSize:12,background:"none",border:"none",color:p.caramel,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>↻ Actualizar ahora</button>
           </div>
 
-          {isManager&&!isSuperAdmin&&<div className="info-box info-blue">Acceso de gerente — puedes asignar tareas del turno. Solo Luis, Fernanda y Victoria tienen acceso a cortes, empleados y derecho de veto.</div>}
+          {isManager&&!isSuperAdmin&&<div className="info-box info-blue">Acceso de gerente — puedes asignar tareas del turno y mandar avisos. Solo Luis, Fernanda y Victoria tienen acceso a cortes, empleados y derecho de veto.</div>}
 
           <div className="tab-row">
-            {(isSuperAdmin?["hoy","cortes","empleados","tareas","digest"]:["tareas"]).map(t=>(
+            {(isSuperAdmin?["hoy","cortes","empleados","tareas","avisos","digest"]:["tareas","avisos"]).map(t=>(
               <button key={t} className="tab-btn" onClick={()=>setAdminTab(t)}
                 style={{background:adminTab===t?p.coffee:"white",color:adminTab===t?p.cream:p.coffee,border:`1.5px solid ${adminTab===t?p.coffee:p.foam}`,fontSize:11}}>
-                {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":t==="tareas"?"Tareas":"Digest"}
+                {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":t==="tareas"?"Tareas":t==="avisos"?"Avisos":"Digest"}
               </button>
             ))}
           </div>
@@ -1226,6 +1326,64 @@ export default function App() {
                         {t.photo_url&&<img src={t.photo_url} className="photo-preview" alt="evidencia" style={{marginTop:8,cursor:"pointer",maxHeight:120}} onClick={()=>setTaskPhotoModal(t.photo_url)} />}
                       </div>
                     ))}
+                  </div>
+                );
+              })}
+            </div>
+          </>)}
+
+          {/* AVISOS */}
+          {!loadingAdmin&&adminTab==="avisos"&&(<>
+            <div className="card">
+              <div className="card-title">📢 Mandar aviso</div>
+              <label>Audiencia</label>
+              <div style={{display:"flex",gap:8,marginBottom:13,flexWrap:"wrap"}}>
+                {[["todos","Todos"],["gerentes","Gerentes"],["individual","Mensaje privado"]].map(([val,lbl])=>(
+                  <button key={val} className={`btn-choice ${adminAnnounceForm.audience===val?"selected":""}`} style={{fontSize:13,padding:12,flex:"1 1 30%"}}
+                    onClick={()=>setAdminAnnounceForm(f=>({...f,audience:val}))}>{lbl}</button>
+                ))}
+              </div>
+              {adminAnnounceForm.audience==="individual"&&(<>
+                <label>Empleado</label>
+                <select value={adminAnnounceForm.employeeId} onChange={e=>setAdminAnnounceForm(f=>({...f,employeeId:e.target.value}))}>
+                  <option value="">Selecciona empleado</option>
+                  {STORES.map(store=>{
+                    const emps=employees.filter(e=>e.store_id===store.id);
+                    if(!emps.length) return null;
+                    return <optgroup key={store.id} label={store.name}>{emps.map(e=><option key={e.id} value={e.id}>{e.full_name}</option>)}</optgroup>;
+                  })}
+                </select>
+                <div className="info-box info-amber" style={{fontSize:12}}>Este mensaje solo lo verá esa persona. En el historial, solo Luis, Fernanda y Victoria pueden leer su contenido — los demás gerentes solo ven que se envió.</div>
+              </>)}
+              <label>Mensaje</label>
+              <textarea placeholder={adminAnnounceForm.audience==="individual"?"Ej. Estás en periodo de auditoría por... / Notamos que...":"Ej. Recuerden mandar sus objeciones de horario antes del viernes 6pm."} value={adminAnnounceForm.message}
+                onChange={e=>setAdminAnnounceForm(f=>({...f,message:e.target.value}))} />
+              <button className="btn btn-primary" disabled={!adminAnnounceForm.message.trim()||sendingAnnouncement||(adminAnnounceForm.audience==="individual"&&!adminAnnounceForm.employeeId)} onClick={handleSendAnnouncement}>
+                {sendingAnnouncement?"Enviando...":"Enviar aviso"}
+              </button>
+              <div style={{fontSize:11,color:p.gray,marginTop:8}}>Se verá (con sonido y vibración) la próxima vez que abran la app.</div>
+            </div>
+
+            <div className="card">
+              <div className="card-title">Avisos enviados</div>
+              {!adminAnnouncementsList.length&&<div style={{textAlign:"center",color:p.gray,fontSize:13,padding:"20px 0"}}>Sin avisos enviados todavía.</div>}
+              {adminAnnouncementsList.map(a=>{
+                const isPrivate=a.audience==="individual";
+                const canSeeContent=!isPrivate||isSuperAdmin||a.created_by===currentUser?.username;
+                const canDelete=!isPrivate||isSuperAdmin||a.created_by===currentUser?.username;
+                return(
+                  <div key={a.id} className="rec-row">
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                      <div style={{flex:1}}>
+                        {isPrivate&&<div style={{fontSize:11,color:p.gray,marginBottom:2}}>Privado para <strong>{a.employee_name}</strong></div>}
+                        <div className="rec-name">{canSeeContent?a.message:"🔒 Mensaje privado — solo Luis, Fernanda o Victoria pueden verlo"}</div>
+                        <div className="rec-meta">{new Date(a.created_at).toLocaleDateString("es-MX",{day:"numeric",month:"short"})} · {new Date(a.created_at).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"})} · @{a.created_by}</div>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end"}}>
+                        <span className={`badge ${a.audience==="gerentes"?"badge-amber":a.audience==="individual"?"badge-red":"badge-blue"}`}>{a.audience==="gerentes"?"Gerentes":a.audience==="individual"?"Privado":"Todos"}</span>
+                        {canDelete&&<button onClick={()=>handleDeleteAnnouncement(a.id)} style={{fontSize:11,background:"none",border:"none",color:p.red,cursor:"pointer"}}>Eliminar</button>}
+                      </div>
+                    </div>
                   </div>
                 );
               })}
