@@ -340,22 +340,32 @@ export default function App() {
 
   async function loadAdminData() {
     setLoadingAdmin(true);
-    const {data:emps}=await supabase.from("employees").select("*").order("store_id");
-    const {data:recs}=await supabase.from("records").select("*").order("timestamp",{ascending:false}).limit(500);
-    const {data:cutsData,error:cutsErr}=await supabase.from("cuts").select("id,employee_id,employee_name,store_id,store_name,timestamp,total_corte,propinas,total_gastos,notas,tiene_gastos_no_aprobados,es_cajero").order("timestamp",{ascending:false}).limit(200);
-    if(emps) setEmployees(emps);
-    if(recs) setRecords(recs);
-    if(cutsData){setCuts(cutsData);setAllCuts(cutsData);}if(cutsErr)console.error("cuts error:",JSON.stringify(cutsErr));
-    setLoadingAdmin(false);
+    try{
+      const {data:emps}=await supabase.from("employees").select("*").order("store_id");
+      const {data:recs}=await supabase.from("records").select("*").order("timestamp",{ascending:false}).limit(500);
+      const {data:cutsData,error:cutsErr}=await supabase.from("cuts").select("id,employee_id,employee_name,store_id,store_name,timestamp,total_corte,propinas,total_gastos,notas,tiene_gastos_no_aprobados,es_cajero").order("timestamp",{ascending:false}).limit(200);
+      if(emps) setEmployees(emps);
+      if(recs) setRecords(recs);
+      if(cutsData){setCuts(cutsData);setAllCuts(cutsData);}if(cutsErr)console.error("cuts error:",JSON.stringify(cutsErr));
+    }catch(err){
+      console.error("loadAdminData error:",err);
+    }finally{
+      setLoadingAdmin(false);
+    }
   }
 
   // Gerentes (sin derecho de veto): solo necesitan la lista de empleados para asignar tareas,
   // no cargan cortes de caja ni el detalle de registros de asistencia.
   async function loadManagerEmployees() {
     setLoadingAdmin(true);
-    const {data:emps}=await supabase.from("employees").select("id,full_name,store_id,store_name").order("store_id");
-    if(emps) setEmployees(emps);
-    setLoadingAdmin(false);
+    try{
+      const {data:emps}=await supabase.from("employees").select("id,full_name,store_id,store_name").order("store_id");
+      if(emps) setEmployees(emps);
+    }catch(err){
+      console.error("loadManagerEmployees error:",err);
+    }finally{
+      setLoadingAdmin(false);
+    }
   }
 
   // ── TAREAS: comprimir y subir foto de evidencia ──────────────────────────
@@ -380,11 +390,17 @@ export default function App() {
   async function loadMyTasks(){
     if(!currentUser) return [];
     setLoadingTasks(true);
-    const today=new Date().toISOString().slice(0,10);
-    const {data}=await supabase.from("task_assignments").select("*").eq("employee_id",currentUser.employeeId).eq("task_date",today).order("created_at",{ascending:true});
-    if(data) setMyTasks(data);
-    setLoadingTasks(false);
-    return data||[];
+    try{
+      const today=new Date().toISOString().slice(0,10);
+      const {data}=await supabase.from("task_assignments").select("*").eq("employee_id",currentUser.employeeId).eq("task_date",today).order("created_at",{ascending:true});
+      if(data) setMyTasks(data);
+      return data||[];
+    }catch(err){
+      console.error("loadMyTasks error:",err);
+      return [];
+    }finally{
+      setLoadingTasks(false);
+    }
   }
 
   // ── AVISOS: cargar, enviar y notificar (sonido + vibración) ──────────────
@@ -442,16 +458,21 @@ export default function App() {
     if(!adminAnnounceForm.message.trim()) return;
     if(adminAnnounceForm.audience==="individual"&&!adminAnnounceForm.employeeId) return;
     setSendingAnnouncement(true);
-    const row={message:adminAnnounceForm.message.trim(),audience:adminAnnounceForm.audience,created_by:currentUser?.username||"admin"};
-    if(adminAnnounceForm.audience==="individual"){
-      const emp=employees.find(e=>e.id===adminAnnounceForm.employeeId);
-      row.employee_id=adminAnnounceForm.employeeId;
-      row.employee_name=emp?.full_name||"";
+    try{
+      const row={message:adminAnnounceForm.message.trim(),audience:adminAnnounceForm.audience,created_by:currentUser?.username||"admin"};
+      if(adminAnnounceForm.audience==="individual"){
+        const emp=employees.find(e=>e.id===adminAnnounceForm.employeeId);
+        row.employee_id=adminAnnounceForm.employeeId;
+        row.employee_name=emp?.full_name||"";
+      }
+      await supabase.from("announcements").insert(row);
+      setAdminAnnounceForm({message:"",audience:"todos",employeeId:""});
+      await loadAdminAnnouncements();
+    }catch(err){
+      console.error("handleSendAnnouncement error:",err);
+    }finally{
+      setSendingAnnouncement(false);
     }
-    await supabase.from("announcements").insert(row);
-    setAdminAnnounceForm({message:"",audience:"todos",employeeId:""});
-    await loadAdminAnnouncements();
-    setSendingAnnouncement(false);
   }
 
   async function loadAdminAnnouncements(){
@@ -499,14 +520,19 @@ export default function App() {
     const descs=adminTaskForm.items.map(t=>t.trim()).filter(Boolean);
     if(!adminTaskForm.employeeId||!descs.length) return;
     setAssigningTasks(true);
-    const emp=employees.find(e=>e.id===adminTaskForm.employeeId);
-    if(!emp){setAssigningTasks(false);return;}
-    const rows=descs.map(description=>({employee_id:emp.id,employee_name:emp.full_name,store_id:emp.store_id,store_name:emp.store_name,task_date:adminTaskForm.date,description,assigned_by:currentUser?.username||"admin"}));
-    await supabase.from("task_assignments").insert(rows);
-    setAdminTaskForm(f=>({...f,items:[""]}));
-    setAdminTasksDate(adminTaskForm.date);
-    await loadAdminTasks();
-    setAssigningTasks(false);
+    try{
+      const emp=employees.find(e=>e.id===adminTaskForm.employeeId);
+      if(!emp) return;
+      const rows=descs.map(description=>({employee_id:emp.id,employee_name:emp.full_name,store_id:emp.store_id,store_name:emp.store_name,task_date:adminTaskForm.date,description,assigned_by:currentUser?.username||"admin"}));
+      await supabase.from("task_assignments").insert(rows);
+      setAdminTaskForm(f=>({...f,items:[""]}));
+      setAdminTasksDate(adminTaskForm.date);
+      await loadAdminTasks();
+    }catch(err){
+      console.error("handleAssignTasks error:",err);
+    }finally{
+      setAssigningTasks(false);
+    }
   }
 
   async function handleDeleteTask(id){
@@ -517,62 +543,78 @@ export default function App() {
   // ── AUTH: LOGIN ────────────────────────────────────────────────────────────
   async function handleLogin() {
     setAuthLoading(true); setAuthError("");
-    const username = loginForm.username.trim().toLowerCase();
-    const {data:emp}=await supabase.from("employees").select("*").eq("username",username).single();
-    if(!emp){setAuthError("Usuario no encontrado. Pide tu acceso al administrador.");setAuthLoading(false);return;}
-    if(!emp.password_hash){
-      // First time — go to setup
-      setSetupForm(f=>({...f,username}));
-      setAuthMode("setup");
+    try{
+      const username = loginForm.username.trim().toLowerCase();
+      const {data:emp}=await supabase.from("employees").select("*").eq("username",username).single();
+      if(!emp){setAuthError("Usuario no encontrado. Pide tu acceso al administrador.");return;}
+      if(!emp.password_hash){
+        // First time — go to setup
+        setSetupForm(f=>({...f,username}));
+        setAuthMode("setup");
+        return;
+      }
+      const hash=await hashPassword(loginForm.password);
+      if(hash!==emp.password_hash){setAuthError("Contraseña incorrecta.");return;}
+      const user={fullName:emp.full_name,storeId:emp.store_id,storeName:emp.store_name,position:emp.position,email:emp.email,employeeId:emp.id,username:emp.username};
+      setLS("ccc_user_v2",user);
+      setCurrentUser(user);
+    }catch(err){
+      setAuthError("No se pudo conectar. Revisa tu conexión e intenta de nuevo.");
+      console.error("handleLogin error:",err);
+    }finally{
       setAuthLoading(false);
-      return;
     }
-    const hash=await hashPassword(loginForm.password);
-    if(hash!==emp.password_hash){setAuthError("Contraseña incorrecta.");setAuthLoading(false);return;}
-    const user={fullName:emp.full_name,storeId:emp.store_id,storeName:emp.store_name,position:emp.position,email:emp.email,employeeId:emp.id,username:emp.username};
-    setLS("ccc_user_v2",user);
-    setCurrentUser(user);
-    setAuthLoading(false);
   }
 
   // ── AUTH: FIRST TIME SETUP ────────────────────────────────────────────────
   async function handleSetupPassword() {
     setAuthLoading(true); setAuthError("");
-    if(setupForm.password.length<6){setAuthError("La contraseña debe tener al menos 6 caracteres.");setAuthLoading(false);return;}
-    if(setupForm.password!==setupForm.confirmPassword){setAuthError("Las contraseñas no coinciden.");setAuthLoading(false);return;}
-    const hash=await hashPassword(setupForm.password);
-    const {data:emp}=await supabase.from("employees").select("*").eq("username",setupForm.username).single();
-    if(!emp){setAuthError("Error al encontrar usuario.");setAuthLoading(false);return;}
-    await supabase.from("employees").update({password_hash:hash}).eq("username",setupForm.username);
-    const user={fullName:emp.full_name,storeId:emp.store_id,storeName:emp.store_name,position:emp.position,email:emp.email,employeeId:emp.id,username:emp.username};
-    setLS("ccc_user_v2",user);
-    setCurrentUser(user);
-    setAuthLoading(false);
+    try{
+      if(setupForm.password.length<6){setAuthError("La contraseña debe tener al menos 6 caracteres.");return;}
+      if(setupForm.password!==setupForm.confirmPassword){setAuthError("Las contraseñas no coinciden.");return;}
+      const hash=await hashPassword(setupForm.password);
+      const {data:emp}=await supabase.from("employees").select("*").eq("username",setupForm.username).single();
+      if(!emp){setAuthError("Error al encontrar usuario.");return;}
+      await supabase.from("employees").update({password_hash:hash}).eq("username",setupForm.username);
+      const user={fullName:emp.full_name,storeId:emp.store_id,storeName:emp.store_name,position:emp.position,email:emp.email,employeeId:emp.id,username:emp.username};
+      setLS("ccc_user_v2",user);
+      setCurrentUser(user);
+    }catch(err){
+      setAuthError("No se pudo conectar. Revisa tu conexión e intenta de nuevo.");
+      console.error("handleSetupPassword error:",err);
+    }finally{
+      setAuthLoading(false);
+    }
   }
 
   // ── ADMIN: CREATE EMPLOYEE ────────────────────────────────────────────────
   async function handleAdminCreateEmployee() {
     setAdminCreating(true); setAdminCreateResult(null);
-    const {fullName,storeId,position,email}=adminCreateForm;
-    const parts=fullName.trim().split(" ");
-    const lastName=parts.length>1?parts[parts.length-1]:parts[0];
-    const empId=generateEmployeeId(storeId,lastName,position);
-    const username=generateUsername(fullName);
-    const store=STORES.find(s=>s.id===storeId);
+    try{
+      const {fullName,storeId,position,email}=adminCreateForm;
+      const parts=fullName.trim().split(" ");
+      const lastName=parts.length>1?parts[parts.length-1]:parts[0];
+      const empId=generateEmployeeId(storeId,lastName,position);
+      const username=generateUsername(fullName);
+      const store=STORES.find(s=>s.id===storeId);
 
-    // Check if username exists, add number if so
-    const {data:existing}=await supabase.from("employees").select("username").like("username",`${username}%`);
-    const finalUsername=existing&&existing.length>0?`${username}${existing.length}`:username;
+      // Check if username exists, add number if so
+      const {data:existing}=await supabase.from("employees").select("username").like("username",`${username}%`);
+      const finalUsername=existing&&existing.length>0?`${username}${existing.length}`:username;
 
-    await supabase.from("employees").upsert({
-      id:empId,full_name:fullName,store_id:storeId,store_name:store.name,
-      position,email,username:finalUsername,password_hash:null,
-    });
+      await supabase.from("employees").upsert({
+        id:empId,full_name:fullName,store_id:storeId,store_name:store.name,
+        position,email,username:finalUsername,password_hash:null,
+      });
 
-    setAdminCreateResult({empId,username:finalUsername,fullName,storeName:store.name});
-    setAdminCreateForm({fullName:"",storeId:"",position:"",email:""});
-    setAdminCreating(false);
-    await loadAdminData();
+      setAdminCreateResult({empId,username:finalUsername,fullName,storeName:store.name});
+      setAdminCreateForm({fullName:"",storeId:"",position:"",email:""});
+      await loadAdminData();
+    }catch(err){
+      console.error("handleAdminCreateEmployee error:",err);
+    }finally{
+      setAdminCreating(false);
+    }
   }
 
   // ── CHECK IN ──────────────────────────────────────────────────────────────
@@ -682,28 +724,33 @@ export default function App() {
     if(submittingCut) return;
     setSubmittingCut(true);
     setCutError("");
-    const efectivo=parseFloat(checkoutForm.efectivo)||0;
-    const tarjeta=parseFloat(checkoutForm.tarjeta)||0;
-    const totalCorte=efectivo+tarjeta;
-    const gastosValidos=checkoutForm.gastos.filter(g=>g.concepto||g.monto);
-    const totalEgresos=gastosValidos.reduce((s,g)=>s+(parseFloat(g.monto)||0),0);
-    if(totalEgresos>totalCorte){
-      setCutError(`🚨 Los egresos (${formatCurrency(totalEgresos)}) no pueden superar el corte (${formatCurrency(totalCorte)}). Verifica los números.`);
-      fetch("/api/notify-expense",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cut:{store_name:currentUser.storeName,timestamp:new Date().toISOString(),total_corte:totalCorte,total_gastos:totalEgresos},employee:{full_name:currentUser.fullName},unapprovedExpenses:gastosValidos,redFlag:true})}).catch(()=>{});
+    try{
+      const efectivo=parseFloat(checkoutForm.efectivo)||0;
+      const tarjeta=parseFloat(checkoutForm.tarjeta)||0;
+      const totalCorte=efectivo+tarjeta;
+      const gastosValidos=checkoutForm.gastos.filter(g=>g.concepto||g.monto);
+      const totalEgresos=gastosValidos.reduce((s,g)=>s+(parseFloat(g.monto)||0),0);
+      if(totalEgresos>totalCorte){
+        setCutError(`🚨 Los egresos (${formatCurrency(totalEgresos)}) no pueden superar el corte (${formatCurrency(totalCorte)}). Verifica los números.`);
+        fetch("/api/notify-expense",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cut:{store_name:currentUser.storeName,timestamp:new Date().toISOString(),total_corte:totalCorte,total_gastos:totalEgresos},employee:{full_name:currentUser.fullName},unapprovedExpenses:gastosValidos,redFlag:true})}).catch(()=>{});
+        return;
+      }
+      const unapproved=gastosValidos.filter(g=>g.concepto&&!isApprovedExpense(g.concepto));
+      const propinasGasto=gastosValidos.find(g=>g.concepto?.toLowerCase().includes("propina"));
+      const propinas=parseFloat(propinasGasto?.monto)||0;
+      const cut={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:currentUser.storeName,timestamp:new Date().toISOString(),shift:pendingShift||null,total_corte:totalCorte,efectivo,tarjeta,propinas,gastos:JSON.stringify(gastosValidos),total_gastos:totalEgresos,notas:checkoutForm.notas,tiene_gastos_no_aprobados:unapproved.length>0,es_cajero:true};
+      await supabase.from("cuts").insert(cut);
+      fetch("/api/send-cut",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cut,employee:{full_name:currentUser.fullName}})}).catch(()=>{});
+      if(unapproved.length>0) fetch("/api/notify-expense",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cut,employee:{full_name:currentUser.fullName},unapprovedExpenses:unapproved})}).catch(()=>{});
+      await loadAllCuts();
+      setCheckoutStep("done");
+      setCheckoutForm({efectivo:"",tarjeta:"",gastos:[{concepto:"",monto:"",fotoPreview:null}],notas:""});
+    }catch(err){
+      setCutError("No se pudo guardar el corte. Revisa tu conexión e intenta de nuevo.");
+      console.error("handleSubmitCut error:",err);
+    }finally{
       setSubmittingCut(false);
-      return;
     }
-    const unapproved=gastosValidos.filter(g=>g.concepto&&!isApprovedExpense(g.concepto));
-    const propinasGasto=gastosValidos.find(g=>g.concepto?.toLowerCase().includes("propina"));
-    const propinas=parseFloat(propinasGasto?.monto)||0;
-    const cut={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:currentUser.storeName,timestamp:new Date().toISOString(),shift:pendingShift||null,total_corte:totalCorte,efectivo,tarjeta,propinas,gastos:JSON.stringify(gastosValidos),total_gastos:totalEgresos,notas:checkoutForm.notas,tiene_gastos_no_aprobados:unapproved.length>0,es_cajero:true};
-    await supabase.from("cuts").insert(cut);
-    fetch("/api/send-cut",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cut,employee:{full_name:currentUser.fullName}})}).catch(()=>{});
-    if(unapproved.length>0) fetch("/api/notify-expense",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cut,employee:{full_name:currentUser.fullName},unapprovedExpenses:unapproved})}).catch(()=>{});
-    await loadAllCuts();
-    setCheckoutStep("done");
-    setCheckoutForm({efectivo:"",tarjeta:"",gastos:[{concepto:"",monto:"",fotoPreview:null}],notas:""});
-    setSubmittingCut(false);
   }
 
   function addGastoRow(){setCheckoutForm(f=>({...f,gastos:[...f.gastos,{concepto:"",monto:"",fotoPreview:null}]}));}
