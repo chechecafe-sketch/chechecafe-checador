@@ -579,28 +579,35 @@ export default function App() {
   async function handleCheckIn() {
     if(!navigator.geolocation){setCheckState(s=>({...s,result:{error:"Tu dispositivo no soporta geolocalización."}}));return;}
     setCheckState(s=>({...s,searching:true,result:null}));
+    const watchdog=setTimeout(()=>{setCheckState(s=>s.searching?{...s,searching:false,result:{error:"La operación tardó demasiado. Revisa tu conexión e intenta de nuevo."}}:s);},20000);
     navigator.geolocation.getCurrentPosition(
       async(pos)=>{
-        const {latitude,longitude}=pos.coords;
-        const store=STORES.find(s=>s.id===currentUser.storeId);
-        const dist=haversine(latitude,longitude,store.lat,store.lng);
-        const isDemoMode=BYPASS_USERS.includes(currentUser.username);
-        if(!isDemoMode&&dist>RADIUS_METERS){setCheckState(s=>({...s,searching:false,result:{error:`Estás a ${Math.round(dist)}m de la tienda. Necesitas estar dentro de ${RADIUS_METERS}m.`}}));return;}
-        const now=new Date(),period=getCurrentPeriod();
-        let lateMinutes=0,note="",shiftKey="fuera_horario";
-        if(period){
-          shiftKey=period.key;
-          const nowMin=now.getHours()*60+now.getMinutes(),diff=nowMin-period.scheduledMin;
-          if(diff>=LATE_MINUTES) lateMinutes=diff;
-          if(period.key==="intermedio"&&(nowMin<600||nowMin>660)) note="⚠️ Fuera de ventana 10-11am — Notificar a Admin (Victoria)";
+        try{
+          const {latitude,longitude}=pos.coords;
+          const store=STORES.find(s=>s.id===currentUser.storeId);
+          const dist=haversine(latitude,longitude,store.lat,store.lng);
+          const isDemoMode=BYPASS_USERS.includes(currentUser.username);
+          if(!isDemoMode&&dist>RADIUS_METERS){setCheckState(s=>({...s,searching:false,result:{error:`Estás a ${Math.round(dist)}m de la tienda. Necesitas estar dentro de ${RADIUS_METERS}m.`}}));return;}
+          const now=new Date(),period=getCurrentPeriod();
+          let lateMinutes=0,note="",shiftKey="fuera_horario";
+          if(period){
+            shiftKey=period.key;
+            const nowMin=now.getHours()*60+now.getMinutes(),diff=nowMin-period.scheduledMin;
+            if(diff>=LATE_MINUTES) lateMinutes=diff;
+            if(period.key==="intermedio"&&(nowMin<600||nowMin>660)) note="⚠️ Fuera de ventana 10-11am — Notificar a Admin (Victoria)";
+          }
+          const rec={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:store.name,timestamp:now.toISOString(),late_minutes:lateMinutes,shift:shiftKey,note,type:"entrada",distance:Math.round(dist)};
+          await supabase.from("records").insert(rec);
+          if(lateMinutes>0||note) fetch("/api/notify-late",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({record:rec,employee:{full_name:currentUser.fullName,email:currentUser.email}})}).catch(()=>{});
+          await loadMyRecords();await loadStats();
+          setCheckState(s=>({...s,searching:false,result:{success:true,rec}}));
+        }catch(err){
+          setCheckState(s=>({...s,searching:false,result:{error:"No se pudo registrar tu entrada. Revisa tu conexión e intenta de nuevo."}}));
+        }finally{
+          clearTimeout(watchdog);
         }
-        const rec={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:store.name,timestamp:now.toISOString(),late_minutes:lateMinutes,shift:shiftKey,note,type:"entrada",distance:Math.round(dist)};
-        await supabase.from("records").insert(rec);
-        if(lateMinutes>0||note) fetch("/api/notify-late",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({record:rec,employee:{full_name:currentUser.fullName,email:currentUser.email}})}).catch(()=>{});
-        await loadMyRecords();await loadStats();
-        setCheckState(s=>({...s,searching:false,result:{success:true,rec}}));
       },
-      ()=>setCheckState(s=>({...s,searching:false,result:{error:"No se pudo obtener tu ubicación."}})),
+      ()=>{clearTimeout(watchdog);setCheckState(s=>({...s,searching:false,result:{error:"No se pudo obtener tu ubicación."}}));},
       {enableHighAccuracy:true,timeout:10000,maximumAge:30000}
     );
   }
@@ -609,56 +616,63 @@ export default function App() {
   async function handleCheckOut() {
     if(!navigator.geolocation){setCheckState(s=>({...s,result:{error:"Tu dispositivo no soporta geolocalización."}}));return;}
     setCheckState(s=>({...s,searching:true,result:null}));
+    const watchdog=setTimeout(()=>{setCheckState(s=>s.searching?{...s,searching:false,result:{error:"La operación tardó demasiado. Revisa tu conexión e intenta de nuevo."}}:s);},20000);
     navigator.geolocation.getCurrentPosition(
       async(pos)=>{
-        const {latitude,longitude}=pos.coords;
-        const store=STORES.find(s=>s.id===currentUser.storeId);
-        const dist=haversine(latitude,longitude,store.lat,store.lng);
-        const isDemoMode=BYPASS_USERS.includes(currentUser.username);
-        if(!isDemoMode&&dist>RADIUS_METERS){setCheckState(s=>({...s,searching:false,result:{error:`Estás a ${Math.round(dist)}m de la tienda. Necesitas estar dentro de ${RADIUS_METERS}m.`}}));return;}
-        const now=new Date();
-        const day=now.getDay();
-        const today=new Date(now);today.setHours(0,0,0,0);
-        const {data:lastEntry}=await supabase.from("records").select("*").eq("employee_id",currentUser.employeeId).eq("type","entrada").gte("timestamp",today.toISOString()).order("timestamp",{ascending:false}).limit(1);
-        const shift=lastEntry?.[0]?.shift||"fuera_horario";
+        try{
+          const {latitude,longitude}=pos.coords;
+          const store=STORES.find(s=>s.id===currentUser.storeId);
+          const dist=haversine(latitude,longitude,store.lat,store.lng);
+          const isDemoMode=BYPASS_USERS.includes(currentUser.username);
+          if(!isDemoMode&&dist>RADIUS_METERS){setCheckState(s=>({...s,searching:false,result:{error:`Estás a ${Math.round(dist)}m de la tienda. Necesitas estar dentro de ${RADIUS_METERS}m.`}}));return;}
+          const now=new Date();
+          const day=now.getDay();
+          const today=new Date(now);today.setHours(0,0,0,0);
+          const {data:lastEntry}=await supabase.from("records").select("*").eq("employee_id",currentUser.employeeId).eq("type","entrada").gte("timestamp",today.toISOString()).order("timestamp",{ascending:false}).limit(1);
+          const shift=lastEntry?.[0]?.shift||"fuera_horario";
 
-        // Early leave detection
-        // Closing times: L-J 22:00, V-S-D vespertino 23:00
-        const isWeekend = day===5||day===6||day===0; // V,S,D
-        const closingHour = isWeekend ? 23 : 22;
-        const nowMin = now.getHours()*60+now.getMinutes();
-        const closeMin = closingHour*60;
-        let earlyMins = 0;
-        if(shift==="vespertino" && nowMin < closeMin-15) {
-          earlyMins = closeMin - nowMin;
-        }
+          // Early leave detection
+          // Closing times: L-J 22:00, V-S-D vespertino 23:00
+          const isWeekend = day===5||day===6||day===0; // V,S,D
+          const closingHour = isWeekend ? 23 : 22;
+          const nowMin = now.getHours()*60+now.getMinutes();
+          const closeMin = closingHour*60;
+          let earlyMins = 0;
+          if(shift==="vespertino" && nowMin < closeMin-15) {
+            earlyMins = closeMin - nowMin;
+          }
 
-        // Check if employee is designated cajero for THIS turno específico (no de todo el día en la tienda)
-        const shiftKey = `${currentUser.storeId}_${shift}_${today.toISOString().split("T")[0]}`;
-        const {data:existingCut}=await supabase.from("cuts").select("employee_id").eq("store_id",currentUser.storeId).eq("shift",shift).gte("timestamp",today.toISOString()).limit(1);
-        const {data:shiftEntries}=await supabase.from("records").select("employee_id,employee_name").eq("store_id",currentUser.storeId).eq("type","entrada").eq("shift",shift).gte("timestamp",today.toISOString()).order("timestamp",{ascending:true});
+          // Check if employee is designated cajero for THIS turno específico (no de todo el día en la tienda)
+          const shiftKey = `${currentUser.storeId}_${shift}_${today.toISOString().split("T")[0]}`;
+          const {data:existingCut}=await supabase.from("cuts").select("employee_id").eq("store_id",currentUser.storeId).eq("shift",shift).gte("timestamp",today.toISOString()).limit(1);
+          const {data:shiftEntries}=await supabase.from("records").select("employee_id,employee_name").eq("store_id",currentUser.storeId).eq("type","entrada").eq("shift",shift).gte("timestamp",today.toISOString()).order("timestamp",{ascending:true});
 
-        // Primera persona en checar entrada en ESTE turno (ordenado cronológicamente) = cajero designado
-        const firstInShift = shiftEntries?.[0]?.employee_id;
-        const amCajero = firstInShift === currentUser.employeeId && (!existingCut || existingCut.length===0);
-        setPendingShift(shift);
+          // Primera persona en checar entrada en ESTE turno (ordenado cronológicamente) = cajero designado
+          const firstInShift = shiftEntries?.[0]?.employee_id;
+          const amCajero = firstInShift === currentUser.employeeId && (!existingCut || existingCut.length===0);
+          setPendingShift(shift);
 
-        const rec={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:store.name,timestamp:now.toISOString(),late_minutes:0,shift,note:earlyMins>0?`Salida anticipada: ${earlyMins} min antes`:"",type:"salida",distance:Math.round(dist)};
-        await supabase.from("records").insert(rec);
+          const rec={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:store.name,timestamp:now.toISOString(),late_minutes:0,shift,note:earlyMins>0?`Salida anticipada: ${earlyMins} min antes`:"",type:"salida",distance:Math.round(dist)};
+          await supabase.from("records").insert(rec);
 
-        if(earlyMins>0) setEarlyLeaveWarning(earlyMins);
-        else setEarlyLeaveWarning(null);
-        setIsCajero(amCajero);
-        setCheckState(s=>({...s,searching:false}));
+          if(earlyMins>0) setEarlyLeaveWarning(earlyMins);
+          else setEarlyLeaveWarning(null);
+          setIsCajero(amCajero);
+          setCheckState(s=>({...s,searching:false}));
 
-        if(amCajero) {
-          // Notify cajero by showing form directly
-          setCheckoutStep("form");
-        } else {
-          setCheckoutStep("done");
+          if(amCajero) {
+            // Notify cajero by showing form directly
+            setCheckoutStep("form");
+          } else {
+            setCheckoutStep("done");
+          }
+        }catch(err){
+          setCheckState(s=>({...s,searching:false,result:{error:"No se pudo registrar tu salida. Revisa tu conexión e intenta de nuevo."}}));
+        }finally{
+          clearTimeout(watchdog);
         }
       },
-      ()=>setCheckState(s=>({...s,searching:false,result:{error:"No se pudo obtener tu ubicación."}})),
+      ()=>{clearTimeout(watchdog);setCheckState(s=>({...s,searching:false,result:{error:"No se pudo obtener tu ubicación."}}));},
       {enableHighAccuracy:true,timeout:10000,maximumAge:30000}
     );
   }
