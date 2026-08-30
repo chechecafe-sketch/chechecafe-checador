@@ -127,6 +127,7 @@ function getTipsMessage(ranking,myPos,myStore,leader) {
 
 function getLS(k,fb){try{return JSON.parse(localStorage.getItem(k))??fb;}catch{return fb;}}
 function setLS(k,v){localStorage.setItem(k,JSON.stringify(v));}
+function clearLS(k){try{localStorage.removeItem(k);}catch{}}
 function removeLS(k){localStorage.removeItem(k);}
 
 async function hashPassword(password) {
@@ -236,6 +237,7 @@ export default function App() {
   const [isCajero, setIsCajero] = useState(false);
   const [cajerosDesignados, setCajerosDesignados] = useState({});
   const [pendingShift, setPendingShift] = useState("");
+  const [pendingSalidaRec, setPendingSalidaRec] = useState(null);
   const [earlyLeaveWarning, setEarlyLeaveWarning] = useState(null);
   const [checkoutForm, setCheckoutForm] = useState({efectivo:"",tarjeta:"",gastos:[{concepto:"",monto:"",fotoPreview:null}],notas:""});
   const [cutError, setCutError] = useState("");
@@ -290,6 +292,7 @@ export default function App() {
         const announcements=await loadAnnouncements();
         checkAlertsAndNotify(tasks,announcements);
       })();
+      checkPendingCut();
       if(SUPER_ADMIN_USERS.includes(currentUser.username)) { setAdminUnlocked(true); }
       else if(MANAGER_USERS.includes(currentUser.username)) { setAdminUnlocked(true); setAdminTab("tareas"); }
     }
@@ -491,6 +494,10 @@ export default function App() {
     if(!file) return;
     setTaskUploadError("");
     setUploadingTaskId(task.id);
+    let done=false;
+    const watchdog=setTimeout(()=>{
+      if(!done){ done=true; setTaskUploadError("Está tardando demasiado — revisa tu conexión e intenta de nuevo."); setUploadingTaskId(null); }
+    },25000);
     try{
       const blob=await compressImage(file);
       const path=`${task.employee_id}/${task.id}-${Date.now()}.jpg`;
@@ -500,10 +507,12 @@ export default function App() {
       await supabase.from("task_assignments").update({status:"completada",photo_url:pub.publicUrl,completed_at:new Date().toISOString()}).eq("id",task.id);
       await loadMyTasks();
     }catch(err){
-      setTaskUploadError("No se pudo subir la foto. Intenta de nuevo.");
+      setTaskUploadError("No se pudo subir la foto. Revisa tu conexión e intenta de nuevo.");
       console.error("task photo upload error:",err);
+    }finally{
+      clearTimeout(watchdog);
+      if(!done){ done=true; setUploadingTaskId(null); }
     }
-    setUploadingTaskId(null);
   }
 
   // ── ADMIN: asignar y ver tareas ───────────────────────────────────────────
@@ -654,6 +663,26 @@ export default function App() {
     );
   }
 
+  // ── CANDADO DEL CORTE: si el cajero cerró la app a medias, lo regresa al formulario ──
+  async function checkPendingCut(){
+    if(!currentUser) return;
+    try{
+      const today=new Date().toISOString().split("T")[0];
+      const flag=getLS(`ccc_pending_cut_${currentUser.employeeId}`,null);
+      if(!flag||flag.date!==today) return;
+      // Verificamos que el corte de ese turno todavía no exista (si ya existe, la bandera quedó huérfana)
+      const {data:existingCut}=await supabase.from("cuts").select("employee_id").eq("store_id",currentUser.storeId).eq("shift",flag.shift).gte("timestamp",`${today}T00:00:00`).limit(1);
+      if(existingCut&&existingCut.length>0){ clearLS(`ccc_pending_cut_${currentUser.employeeId}`); return; }
+      setPendingShift(flag.shift);
+      setIsCajero(true);
+      setPendingSalidaRec(null); // se genera uno nuevo con el timestamp de ahora al enviar el corte
+      setTab("check");
+      setCheckoutStep("form");
+    }catch(err){
+      console.error("checkPendingCut error:",err);
+    }
+  }
+
   // ── CHECK OUT ─────────────────────────────────────────────────────────────
   async function handleCheckOut() {
     if(!navigator.geolocation){setCheckState(s=>({...s,result:{error:"Tu dispositivo no soporta geolocalización."}}));return;}
@@ -695,7 +724,6 @@ export default function App() {
           setPendingShift(shift);
 
           const rec={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:store.name,timestamp:now.toISOString(),late_minutes:0,shift,note:earlyMins>0?`Salida anticipada: ${earlyMins} min antes`:"",type:"salida",distance:Math.round(dist)};
-          await supabase.from("records").insert(rec);
 
           if(earlyMins>0) setEarlyLeaveWarning(earlyMins);
           else setEarlyLeaveWarning(null);
@@ -703,9 +731,15 @@ export default function App() {
           setCheckState(s=>({...s,searching:false}));
 
           if(amCajero) {
-            // Notify cajero by showing form directly
+            // 🔒 Candado: al cajero designado NO se le registra la salida todavía.
+            // Su salida se guarda hasta que complete el corte (ver handleSubmitCut).
+            // Así, si cierra la app a medias, no queda "afuera" sin haber subido el corte.
+            // Guardamos una bandera local para forzarlo de vuelta al formulario si cierra la app antes de terminar.
+            setLS(`ccc_pending_cut_${currentUser.employeeId}`,{shift,date:today.toISOString().split("T")[0]});
+            setPendingSalidaRec(rec);
             setCheckoutStep("form");
           } else {
+            await supabase.from("records").insert(rec);
             setCheckoutStep("done");
           }
         }catch(err){
@@ -740,6 +774,13 @@ export default function App() {
       const propinas=parseFloat(propinasGasto?.monto)||0;
       const cut={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:currentUser.storeName,timestamp:new Date().toISOString(),shift:pendingShift||null,total_corte:totalCorte,efectivo,tarjeta,propinas,gastos:JSON.stringify(gastosValidos),total_gastos:totalEgresos,notas:checkoutForm.notas,tiene_gastos_no_aprobados:unapproved.length>0,es_cajero:true};
       await supabase.from("cuts").insert(cut);
+      // 🔒 Candado del corte: la salida del cajero se registra HASTA AQUÍ, junto con el corte.
+      // Si no había una salida pendiente guardada (p.ej. reingresó tras cerrar la app a medias),
+      // se registra una salida nueva con el timestamp de ahora.
+      const salidaFinal=pendingSalidaRec||{id:Date.now().toString()+"s",employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:currentUser.storeName,timestamp:new Date().toISOString(),late_minutes:0,shift:pendingShift||null,note:"",type:"salida",distance:0};
+      await supabase.from("records").insert(salidaFinal);
+      setPendingSalidaRec(null);
+      clearLS(`ccc_pending_cut_${currentUser.employeeId}`);
       fetch("/api/send-cut",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cut,employee:{full_name:currentUser.fullName}})}).catch(()=>{});
       if(unapproved.length>0) fetch("/api/notify-expense",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cut,employee:{full_name:currentUser.fullName},unapprovedExpenses:unapproved})}).catch(()=>{});
       await loadAllCuts();
