@@ -62,6 +62,7 @@ export default async function handler(req, res) {
         .from("cuts")
         .select("id, employee_name, timestamp")
         .eq("store_id", store.id)
+        .eq("shift", shift)
         .eq("es_cajero", true)
         .gte("timestamp", todayStart.toISOString());
 
@@ -73,6 +74,54 @@ export default async function handler(req, res) {
           shift: shift === "matutino" ? "Matutino" : "Vespertino",
           employees: names,
         });
+
+        // Strike + aviso automático al cajero designado (el primero en checar entrada de ese turno)
+        try {
+          const { data: shiftEntries } = await supabase
+            .from("records")
+            .select("employee_id, employee_name")
+            .eq("store_id", store.id)
+            .eq("type", "entrada")
+            .eq("shift", shift)
+            .gte("timestamp", todayStart.toISOString())
+            .order("timestamp", { ascending: true })
+            .limit(1);
+          const cajero = shiftEntries && shiftEntries[0];
+          if (cajero) {
+            const dateStr = todayStart.toISOString().split("T")[0];
+            const shiftLabel = shift === "matutino" ? "Matutino" : "Vespertino";
+            const strikeId = `${cajero.employee_id}_${store.id}_${shift}_${dateStr}_nocut`;
+            const { error: strikeErr } = await supabase.from("compliance_strikes").insert({
+              id: strikeId,
+              employee_id: cajero.employee_id,
+              employee_name: cajero.employee_name,
+              store_id: store.id,
+              store_name: store.name,
+              shift,
+              strike_date: dateStr,
+              reason: "corte_no_subido",
+            });
+            if (!strikeErr) {
+              const { count } = await supabase
+                .from("compliance_strikes")
+                .select("id", { count: "exact", head: true })
+                .eq("employee_id", cajero.employee_id);
+              const n = count || 1;
+              const msg = n >= 3
+                ? `🚨 Van ${n} veces que no cumples con subir el corte de tu turno (última: ${shiftLabel} en ${store.name}). Estás en riesgo de desempeño por debajo de lo esperado — puede derivar en llamada de atención o rescisión de tu contrato. Habla con tu gerente.`
+                : `⚠️ No subiste el corte de tu turno ${shiftLabel} en ${store.name}. Aviso ${n} de 3 por no cumplimiento.`;
+              await supabase.from("announcements").insert({
+                message: msg,
+                audience: "individual",
+                employee_id: cajero.employee_id,
+                employee_name: cajero.employee_name,
+                created_by: "sistema",
+              });
+            }
+          }
+        } catch (strikeCatchErr) {
+          console.error("strike insert error:", strikeCatchErr);
+        }
       }
     }
   }

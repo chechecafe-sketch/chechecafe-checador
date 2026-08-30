@@ -285,6 +285,8 @@ export default function App() {
   const [complianceRows, setComplianceRows] = useState([]);
   const [complianceFilter, setComplianceFilter] = useState("semana");
   const [loadingCompliance, setLoadingCompliance] = useState(false);
+  const [strikeRows, setStrikeRows] = useState([]);
+  const [resettingStrikeId, setResettingStrikeId] = useState(null);
 
   // ── AVISOS / ALERTAS ──────────────────────────────────────────────────────
   const [activeAlerts, setActiveAlerts] = useState([]); // banners a mostrar al empleado
@@ -564,6 +566,37 @@ export default function App() {
     }finally{
       setLoadingCompliance(false);
     }
+    await loadStrikes();
+  }
+
+  // ── STRIKES: incumplimientos de meta de venta y cortes no subidos ───────────
+  async function loadStrikes(){
+    try{
+      const {data}=await supabase.from("compliance_strikes").select("*").order("strike_date",{ascending:false});
+      if(!data){ setStrikeRows([]); return; }
+      const byEmp={};
+      data.forEach(s=>{
+        if(!byEmp[s.employee_id]) byEmp[s.employee_id]={employeeId:s.employee_id,name:s.employee_name,storeName:s.store_name,total:0,lastDate:s.strike_date,items:[]};
+        byEmp[s.employee_id].total+=1;
+        byEmp[s.employee_id].items.push(s);
+      });
+      const rows=Object.values(byEmp).sort((a,b)=>b.total-a.total);
+      setStrikeRows(rows);
+    }catch(err){
+      console.error("loadStrikes error:",err);
+    }
+  }
+
+  async function handleResetStrikes(employeeId){
+    setResettingStrikeId(employeeId);
+    try{
+      await supabase.from("compliance_strikes").delete().eq("employee_id",employeeId);
+      await loadStrikes();
+    }catch(err){
+      console.error("handleResetStrikes error:",err);
+    }finally{
+      setResettingStrikeId(null);
+    }
   }
 
   // ── METAS DE VENTA: cargar y guardar (fijas por tienda+turno hasta que se actualicen) ──
@@ -793,7 +826,9 @@ export default function App() {
 
           // Primera persona en checar entrada en ESTE turno (ordenado cronológicamente) = cajero designado
           const firstInShift = shiftEntries?.[0]?.employee_id;
-          const amCajero = firstInShift === currentUser.employeeId && (!existingCut || existingCut.length===0);
+          // El corte de caja solo existe en los turnos matutino y vespertino — el intermedio no cierra caja.
+          const shiftTieneCorte = shift==="matutino"||shift==="vespertino";
+          const amCajero = shiftTieneCorte && firstInShift === currentUser.employeeId && (!existingCut || existingCut.length===0);
           setPendingShift(shift);
 
           const rec={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:store.name,timestamp:now.toISOString(),late_minutes:0,shift,note:earlyMins>0?`Salida anticipada: ${earlyMins} min antes`:"",type:"salida",distance:Math.round(dist)};
@@ -827,6 +862,31 @@ export default function App() {
   }
 
   // ── SUBMIT CUT ────────────────────────────────────────────────────────────
+  // ── METAS: al subir el corte, comparar contra la meta del turno y avisar/strike ──
+  async function checkGoalAndNotify(cut){
+    try{
+      if(cut.shift!=="matutino"&&cut.shift!=="vespertino") return; // el intermedio no tiene meta de venta
+      const {data:goalRow}=await supabase.from("sales_goals").select("goal_amount").eq("store_id",cut.store_id).eq("shift",cut.shift).maybeSingle();
+      const goalAmount=goalRow?.goal_amount||0;
+      if(!goalAmount||goalAmount<=0) return; // sin meta asignada, no hay nada que evaluar
+      const shiftLabel=SCHEDULES[cut.shift]?.label||cut.shift;
+      const dateStr=new Date(cut.timestamp).toISOString().split("T")[0];
+      if(cut.total_corte>=goalAmount){
+        await supabase.from("announcements").insert({message:`🎉 ¡Meta cumplida! Turno ${shiftLabel} en ${cut.store_name}: ${formatCurrency(cut.total_corte)} de meta ${formatCurrency(goalAmount)}. ¡Buen trabajo!`,audience:"individual",employee_id:cut.employee_id,employee_name:cut.employee_name,created_by:"sistema"});
+        return;
+      }
+      await supabase.from("compliance_strikes").insert({id:`${cut.employee_id}_${cut.store_id}_${cut.shift}_${dateStr}`,employee_id:cut.employee_id,employee_name:cut.employee_name,store_id:cut.store_id,store_name:cut.store_name,shift:cut.shift,strike_date:dateStr,reason:"meta_no_cumplida",goal_amount:goalAmount,actual_amount:cut.total_corte});
+      const {count}=await supabase.from("compliance_strikes").select("id",{count:"exact",head:true}).eq("employee_id",cut.employee_id);
+      const n=count||1;
+      const msg=n>=3
+        ?`🚨 Van ${n} veces que no cumples tu meta de venta (última: turno ${shiftLabel}, ${formatCurrency(cut.total_corte)} de meta ${formatCurrency(goalAmount)}). Estás en riesgo de desempeño por debajo de lo esperado — puede derivar en llamada de atención o rescisión de tu contrato. Habla con tu gerente.`
+        :`⚠️ No llegaste a la meta de venta en tu turno ${shiftLabel} (${formatCurrency(cut.total_corte)} de meta ${formatCurrency(goalAmount)}). Aviso ${n} de 3 por no cumplimiento de meta.`;
+      await supabase.from("announcements").insert({message:msg,audience:"individual",employee_id:cut.employee_id,employee_name:cut.employee_name,created_by:"sistema"});
+    }catch(err){
+      console.error("checkGoalAndNotify error:",err);
+    }
+  }
+
   async function handleSubmitCut() {
     if(submittingCut) return;
     setSubmittingCut(true);
@@ -847,6 +907,7 @@ export default function App() {
       const propinas=parseFloat(propinasGasto?.monto)||0;
       const cut={id:Date.now().toString(),employee_id:currentUser.employeeId,employee_name:currentUser.fullName,store_id:currentUser.storeId,store_name:currentUser.storeName,timestamp:new Date().toISOString(),shift:pendingShift||null,total_corte:totalCorte,efectivo,tarjeta,propinas,gastos:JSON.stringify(gastosValidos),total_gastos:totalEgresos,notas:checkoutForm.notas,tiene_gastos_no_aprobados:unapproved.length>0,es_cajero:true};
       await supabase.from("cuts").insert(cut);
+      checkGoalAndNotify(cut).catch(()=>{});
       // 🔒 Candado del corte: la salida del cajero se registra HASTA AQUÍ, junto con el corte.
       // Si no había una salida pendiente guardada (p.ej. reingresó tras cerrar la app a medias),
       // se registra una salida nueva con el timestamp de ahora.
@@ -1397,7 +1458,7 @@ export default function App() {
                 La meta queda fija para ese turno y tienda hasta que la cambies. Se compara contra el total del corte del día.
               </div>
               {(()=>{
-                const shiftKeys=["matutino","intermedio","vespertino"];
+                const shiftKeys=["matutino","vespertino"]; // el intermedio no cierra caja, no aplica meta de venta
                 return STORES.map(store=>(
                   <div key={store.id} style={{marginBottom:18}}>
                     <div className="section-title">{store.name}</div>
@@ -1593,6 +1654,34 @@ export default function App() {
                       <div className="rec-meta">{r.storeName} · {r.completed}/{r.total} tareas</div>
                     </div>
                     <span className={`badge ${r.pct>=90?"badge-green":r.pct>=70?"badge-amber":"badge-red"}`}>{r.pct}%</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* STRIKES DE META DE VENTA */}
+          {adminTab==="cumplimiento"&&(
+            <div className="card">
+              <div className="card-title">Strikes por meta de venta</div>
+              <div style={{fontSize:12,color:p.gray,marginBottom:14}}>
+                Cada vez que un cajero no llega a la meta de su turno, o no sube el corte, se le manda un aviso automático y suma un strike. Al llegar a 3, el aviso les advierte riesgo de rescisión. Reinicia el contador después de hablar con la persona.
+              </div>
+              {!strikeRows.length&&<div style={{textAlign:"center",color:p.gray,fontSize:13,padding:"20px 0"}}>Sin strikes registrados.</div>}
+              {strikeRows.map(r=>(
+                <div key={r.employeeId} className="rec-row">
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                    <div>
+                      <div className="rec-name">{r.name}</div>
+                      <div className="rec-meta">{r.storeName} · último: {new Date(r.lastDate).toLocaleDateString("es-MX",{day:"numeric",month:"short"})}</div>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span className={`badge ${r.total>=3?"badge-red":"badge-amber"}`}>{r.total>=3?"🚨":"⚠️"} {r.total} strike{r.total===1?"":"s"}</span>
+                      <button onClick={()=>handleResetStrikes(r.employeeId)} disabled={resettingStrikeId===r.employeeId}
+                        style={{width:"auto",padding:"6px 10px",fontSize:11,marginBottom:0}}>
+                        {resettingStrikeId===r.employeeId?"...":"Reiniciar"}
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
