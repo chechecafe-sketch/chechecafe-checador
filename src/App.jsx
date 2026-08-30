@@ -281,6 +281,11 @@ export default function App() {
   const [savingGoalKey, setSavingGoalKey] = useState(null);
   const [metasTodayCuts, setMetasTodayCuts] = useState([]);
 
+  // ── CUMPLIMIENTO DE TAREAS: score por empleado ──────────────────────────────
+  const [complianceRows, setComplianceRows] = useState([]);
+  const [complianceFilter, setComplianceFilter] = useState("semana");
+  const [loadingCompliance, setLoadingCompliance] = useState(false);
+
   // ── AVISOS / ALERTAS ──────────────────────────────────────────────────────
   const [activeAlerts, setActiveAlerts] = useState([]); // banners a mostrar al empleado
   const [adminAnnounceForm, setAdminAnnounceForm] = useState({message:"",audience:"todos",employeeId:""});
@@ -322,6 +327,7 @@ export default function App() {
 
   useEffect(()=>{ if(adminUnlocked&&adminTab==="tareas") loadAdminTasks(); },[adminUnlocked,adminTab,adminTasksDate]);
   useEffect(()=>{ if(adminUnlocked&&adminTab==="metas") loadSalesGoals(); },[adminUnlocked,adminTab]);
+  useEffect(()=>{ if(adminUnlocked&&adminTab==="cumplimiento") loadCompliance(); },[adminUnlocked,adminTab,complianceFilter]);
   useEffect(()=>{ if(adminUnlocked&&adminTab==="avisos") loadAdminAnnouncements(); },[adminUnlocked,adminTab]);
 
   async function loadMyRecords() {
@@ -526,6 +532,38 @@ export default function App() {
   async function loadAdminTasks(){
     const {data}=await supabase.from("task_assignments").select("*").eq("task_date",adminTasksDate).order("store_id").order("employee_name");
     if(data) setAdminTasksList(data);
+  }
+
+  // ── CUMPLIMIENTO: % de tareas completadas por empleado en un periodo ────────
+  function complianceStartDate(){
+    const now2=new Date();
+    if(complianceFilter==="hoy"){return now2.toISOString().split("T")[0];}
+    if(complianceFilter==="semana"){const d=new Date(now2);d.setDate(d.getDate()-7);return d.toISOString().split("T")[0];}
+    if(complianceFilter==="quincena"){const d=new Date(now2);d.setDate(d.getDate()-15);return d.toISOString().split("T")[0];}
+    if(complianceFilter==="mes"){const d=new Date(now2);d.setDate(d.getDate()-30);return d.toISOString().split("T")[0];}
+    return "2000-01-01";
+  }
+
+  async function loadCompliance(){
+    setLoadingCompliance(true);
+    try{
+      const start=complianceStartDate();
+      const {data}=await supabase.from("task_assignments").select("employee_id,employee_name,store_id,store_name,status,task_date").gte("task_date",start).order("employee_name");
+      if(!data){ setComplianceRows([]); return; }
+      const byEmp={};
+      data.forEach(t=>{
+        if(!byEmp[t.employee_id]) byEmp[t.employee_id]={employeeId:t.employee_id,name:t.employee_name,storeName:t.store_name,total:0,completed:0};
+        byEmp[t.employee_id].total+=1;
+        if(t.status==="completada") byEmp[t.employee_id].completed+=1;
+      });
+      const rows=Object.values(byEmp).map(r=>({...r,pct:r.total>0?Math.round((r.completed/r.total)*100):0}));
+      rows.sort((a,b)=>a.pct-b.pct);
+      setComplianceRows(rows);
+    }catch(err){
+      console.error("loadCompliance error:",err);
+    }finally{
+      setLoadingCompliance(false);
+    }
   }
 
   // ── METAS DE VENTA: cargar y guardar (fijas por tienda+turno hasta que se actualicen) ──
@@ -1213,10 +1251,10 @@ export default function App() {
           {isManager&&!isSuperAdmin&&<div className="info-box info-blue">Acceso de gerente — puedes asignar tareas del turno y mandar avisos. Solo Luis, Fernanda y Victoria tienen acceso a cortes, empleados y derecho de veto.</div>}
 
           <div className="tab-row">
-            {(isSuperAdmin?["hoy","cortes","empleados","metas","tareas","avisos","digest"]:["metas","tareas","avisos"]).map(t=>(
+            {(isSuperAdmin?["hoy","cortes","empleados","metas","tareas","cumplimiento","avisos","digest"]:["metas","tareas","cumplimiento","avisos"]).map(t=>(
               <button key={t} className="tab-btn" onClick={()=>setAdminTab(t)}
                 style={{background:adminTab===t?p.coffee:"white",color:adminTab===t?p.cream:p.coffee,border:`1.5px solid ${adminTab===t?p.coffee:p.foam}`,fontSize:11}}>
-                {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":t==="metas"?"Metas":t==="tareas"?"Tareas":t==="avisos"?"Avisos":"Digest"}
+                {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":t==="metas"?"Metas":t==="tareas"?"Tareas":t==="cumplimiento"?"Cumplimiento":t==="avisos"?"Avisos":"Digest"}
               </button>
             ))}
           </div>
@@ -1527,6 +1565,39 @@ export default function App() {
               })}
             </div>
           </>)}
+
+          {/* CUMPLIMIENTO DE TAREAS */}
+          {adminTab==="cumplimiento"&&(
+            <div className="card">
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <div className="card-title" style={{margin:0}}>Cumplimiento de tareas</div>
+                <select value={complianceFilter} onChange={e=>setComplianceFilter(e.target.value)}
+                  style={{width:"auto",padding:"6px 10px",fontSize:12,marginBottom:0}}>
+                  <option value="hoy">Hoy</option>
+                  <option value="semana">Últimos 7 días</option>
+                  <option value="quincena">Últimos 15 días</option>
+                  <option value="mes">Últimos 30 días</option>
+                  <option value="todo">Todo</option>
+                </select>
+              </div>
+              <div style={{fontSize:12,color:p.gray,marginBottom:14}}>
+                % de tareas asignadas que cada quien marcó como completada (con foto) en el periodo. Ordenado de peor a mejor.
+              </div>
+              {loadingCompliance&&<div style={{textAlign:"center",padding:"30px 0",color:p.gray}}>Cargando...</div>}
+              {!loadingCompliance&&!complianceRows.length&&<div style={{textAlign:"center",color:p.gray,fontSize:13,padding:"20px 0"}}>Sin tareas asignadas en este período.</div>}
+              {!loadingCompliance&&complianceRows.map(r=>(
+                <div key={r.employeeId} className="rec-row">
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <div className="rec-name">{r.name}</div>
+                      <div className="rec-meta">{r.storeName} · {r.completed}/{r.total} tareas</div>
+                    </div>
+                    <span className={`badge ${r.pct>=90?"badge-green":r.pct>=70?"badge-amber":"badge-red"}`}>{r.pct}%</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* AVISOS */}
           {!loadingAdmin&&adminTab==="avisos"&&(<>
