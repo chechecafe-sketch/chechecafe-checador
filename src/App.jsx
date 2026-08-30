@@ -18,6 +18,7 @@ const STORES = [
 const RADIUS_METERS = 100;
 const LATE_MINUTES = 15;
 const CAPUCHINO_PRICE = 66;
+const LATTE_PRICE = 71;
 const ADMIN_PIN = "5366";
 const BYPASS_USERS = ["elmaschingon", "fernanda.hughes", "victoria.santamaria", "luis.gutierrez2", "luis.gutierrez"];
 // Derecho de veto / admin completo (cortes, empleados, digest)
@@ -288,6 +289,11 @@ export default function App() {
   const [strikeRows, setStrikeRows] = useState([]);
   const [resettingStrikeId, setResettingStrikeId] = useState(null);
 
+  // ── RANKING DE TIENDAS (estilo F1) + LOGROS (gamificación) ──────────────────
+  const [rankingRows, setRankingRows] = useState([]);
+  const [rankingFilter, setRankingFilter] = useState("semana");
+  const [loadingRanking, setLoadingRanking] = useState(false);
+
   // ── AVISOS / ALERTAS ──────────────────────────────────────────────────────
   const [activeAlerts, setActiveAlerts] = useState([]); // banners a mostrar al empleado
   const [adminAnnounceForm, setAdminAnnounceForm] = useState({message:"",audience:"todos",employeeId:""});
@@ -330,6 +336,7 @@ export default function App() {
   useEffect(()=>{ if(adminUnlocked&&adminTab==="tareas") loadAdminTasks(); },[adminUnlocked,adminTab,adminTasksDate]);
   useEffect(()=>{ if(adminUnlocked&&adminTab==="metas") loadSalesGoals(); },[adminUnlocked,adminTab]);
   useEffect(()=>{ if(adminUnlocked&&adminTab==="cumplimiento") loadCompliance(); },[adminUnlocked,adminTab,complianceFilter]);
+  useEffect(()=>{ if(adminUnlocked&&isSuperAdmin&&adminTab==="ranking") loadRanking(); },[adminUnlocked,adminTab,rankingFilter]);
   useEffect(()=>{ if(adminUnlocked&&adminTab==="avisos") loadAdminAnnouncements(); },[adminUnlocked,adminTab]);
 
   async function loadMyRecords() {
@@ -444,6 +451,7 @@ export default function App() {
       a.audience==="todos"
       ||((isManager||isSuperAdmin)&&a.audience==="gerentes")
       ||(a.audience==="individual"&&a.employee_id===currentUser?.employeeId)
+      ||(a.audience==="tienda"&&a.store_id===currentUser?.storeId)
     );
     return relevant;
   }
@@ -584,6 +592,93 @@ export default function App() {
       setStrikeRows(rows);
     }catch(err){
       console.error("loadStrikes error:",err);
+    }
+  }
+
+  function rankingStartDate(){
+    const now2=new Date();
+    if(rankingFilter==="hoy"){const d=new Date(now2);d.setHours(0,0,0,0);return d;}
+    if(rankingFilter==="semana"){const d=new Date(now2);d.setDate(d.getDate()-7);return d;}
+    if(rankingFilter==="quincena"){const d=new Date(now2);d.setDate(d.getDate()-15);return d;}
+    if(rankingFilter==="mes"){const d=new Date(now2);d.setDate(d.getDate()-30);return d;}
+    return new Date(0);
+  }
+
+  async function loadRanking(){
+    setLoadingRanking(true);
+    try{
+      const start=rankingStartDate();
+      const {data:periodCuts}=await supabase.from("cuts").select("store_id,total_corte,employee_id,timestamp").gte("timestamp",start.toISOString());
+      const totals={};
+      STORES.forEach(s=>{totals[s.id]=0;});
+      (periodCuts||[]).forEach(c=>{ if(c.employee_id==='DEMO01') return; if(totals[c.store_id]===undefined) totals[c.store_id]=0; totals[c.store_id]+=(c.total_corte||0); });
+
+      // Meta diaria por tienda = suma de metas matutino+vespertino asignadas
+      const {data:goals}=await supabase.from("sales_goals").select("store_id,goal_amount");
+      const dailyGoal={};
+      (goals||[]).forEach(g=>{ dailyGoal[g.store_id]=(dailyGoal[g.store_id]||0)+(g.goal_amount||0); });
+
+      // Últimos 10 días completos (sin contar hoy) para calcular racha de logros
+      const lookbackDays=10;
+      const dayStart=(offset)=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-offset);return d;};
+      const lookbackFrom=dayStart(lookbackDays);
+      const {data:recentCuts}=await supabase.from("cuts").select("store_id,total_corte,employee_id,timestamp").gte("timestamp",lookbackFrom.toISOString());
+      const byStoreDay={}; // store_id -> {dateStr: total}
+      (recentCuts||[]).forEach(c=>{
+        if(c.employee_id==='DEMO01') return;
+        const dateStr=new Date(c.timestamp).toISOString().split("T")[0];
+        if(!byStoreDay[c.store_id]) byStoreDay[c.store_id]={};
+        byStoreDay[c.store_id][dateStr]=(byStoreDay[c.store_id][dateStr]||0)+(c.total_corte||0);
+      });
+
+      const {data:streakStates}=await supabase.from("store_streak_state").select("*");
+      const streakStateByStore={}; (streakStates||[]).forEach(s=>{streakStateByStore[s.store_id]=s;});
+
+      const rows=STORES.map(store=>{
+        const goal=dailyGoal[store.id]||0;
+        let streak=0, misses3=0, evaluatedDays=0;
+        if(goal>0){
+          for(let i=1;i<=lookbackDays;i++){ // desde ayer hacia atrás
+            const dateStr=dayStart(i).toISOString().split("T")[0];
+            const total=(byStoreDay[store.id]||{})[dateStr]||0;
+            const achieved=total>=goal;
+            if(i<=3 && !achieved) misses3+=1;
+            if(i===streak+1 && achieved) streak+=1;
+            else if(i===streak+1 && !achieved){ /* racha se rompe aquí */ }
+            evaluatedDays+=1;
+          }
+        }
+        const lives=goal>0?Math.max(0,3-misses3):null;
+        const tier=streak>=10?"supernova":streak>=5?"star":streak>=1?"building":"none";
+        return {storeId:store.id,storeName:store.name,total:totals[store.id]||0,goal,streak,lives,tier};
+      });
+      rows.sort((a,b)=>b.total-a.total);
+      const leaderTotal=rows[0]?.total||0;
+      const final=rows.map((r,i)=>{
+        const gap=leaderTotal-r.total;
+        return {...r,position:i+1,gap,lattesNeeded:gap>0?Math.ceil(gap/LATTE_PRICE):0};
+      });
+      setRankingRows(final);
+
+      // Avisar por primera vez cuando una tienda cruza 5 o 10 logros seguidos, y resetear si la racha se rompe
+      for(const r of final){
+        if(r.goal<=0) continue;
+        const state=streakStateByStore[r.storeId];
+        const lastMilestone=state?.last_milestone||0;
+        if(r.streak>=10 && lastMilestone<10){
+          await supabase.from("announcements").insert({message:`☄️ ¡SUPERNOVA MODE! ${r.storeName} lleva 10 turnos seguidos cumpliendo su meta de venta. ¡Bono especial en camino! 🎉`,audience:"tienda",store_id:r.storeId,created_by:"sistema"});
+          await supabase.from("store_streak_state").upsert({store_id:r.storeId,last_milestone:10,updated_at:new Date().toISOString()});
+        }else if(r.streak>=5 && lastMilestone<5){
+          await supabase.from("announcements").insert({message:`🌟 ¡STAR MODE! ${r.storeName} lleva 5 turnos seguidos cumpliendo su meta de venta. Se van a ganar un bono — les llega pronto. ¡Sigan así! 🎉`,audience:"tienda",store_id:r.storeId,created_by:"sistema"});
+          await supabase.from("store_streak_state").upsert({store_id:r.storeId,last_milestone:5,updated_at:new Date().toISOString()});
+        }else if(r.streak===0 && lastMilestone>0){
+          await supabase.from("store_streak_state").upsert({store_id:r.storeId,last_milestone:0,updated_at:new Date().toISOString()});
+        }
+      }
+    }catch(err){
+      console.error("loadRanking error:",err);
+    }finally{
+      setLoadingRanking(false);
     }
   }
 
@@ -1312,10 +1407,10 @@ export default function App() {
           {isManager&&!isSuperAdmin&&<div className="info-box info-blue">Acceso de gerente — puedes asignar tareas del turno y mandar avisos. Solo Luis, Fernanda y Victoria tienen acceso a cortes, empleados y derecho de veto.</div>}
 
           <div className="tab-row">
-            {(isSuperAdmin?["hoy","cortes","empleados","metas","tareas","cumplimiento","avisos","digest"]:["metas","tareas","cumplimiento","avisos"]).map(t=>(
+            {(isSuperAdmin?["hoy","cortes","empleados","metas","ranking","tareas","cumplimiento","avisos","digest"]:["metas","tareas","cumplimiento","avisos"]).map(t=>(
               <button key={t} className="tab-btn" onClick={()=>setAdminTab(t)}
                 style={{background:adminTab===t?p.coffee:"white",color:adminTab===t?p.cream:p.coffee,border:`1.5px solid ${adminTab===t?p.coffee:p.foam}`,fontSize:11}}>
-                {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":t==="metas"?"Metas":t==="tareas"?"Tareas":t==="cumplimiento"?"Cumplimiento":t==="avisos"?"Avisos":"Digest"}
+                {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":t==="metas"?"Metas":t==="ranking"?"Ranking":t==="tareas"?"Tareas":t==="cumplimiento"?"Cumplimiento":t==="avisos"?"Avisos":"Digest"}
               </button>
             ))}
           </div>
@@ -1495,6 +1590,50 @@ export default function App() {
                   </div>
                 ));
               })()}
+            </div>
+          )}
+
+          {/* RANKING DE TIENDAS — ESTILO F1 + LOGROS */}
+          {isSuperAdmin&&adminTab==="ranking"&&(
+            <div className="card">
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <div className="card-title" style={{margin:0}}>🏁 Ranking de tiendas</div>
+                <select value={rankingFilter} onChange={e=>setRankingFilter(e.target.value)}
+                  style={{width:"auto",padding:"6px 10px",fontSize:12,marginBottom:0}}>
+                  <option value="hoy">Hoy</option>
+                  <option value="semana">Esta semana</option>
+                  <option value="quincena">Esta quincena</option>
+                  <option value="mes">Este mes</option>
+                  <option value="todo">Todo</option>
+                </select>
+              </div>
+              <div style={{fontSize:12,color:p.gray,marginBottom:14}}>
+                Ventas totales por tienda, como en la parrilla de F1: quién va en primero y cuánto le falta a cada quien para alcanzarlo. Los logros (🌟/☄️) se calculan por turnos seguidos cumpliendo la meta diaria asignada en "Metas".
+              </div>
+              {loadingRanking&&<div style={{textAlign:"center",padding:"30px 0",color:p.gray}}>Cargando...</div>}
+              {!loadingRanking&&rankingRows.map(r=>(
+                <div key={r.storeId} className="rec-row">
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                    <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                      <div style={{fontSize:18,fontWeight:600,color:p.coffee,minWidth:34}}>
+                        {r.position===1?"🥇":r.position===2?"🥈":r.position===3?"🥉":`P${r.position}`}
+                      </div>
+                      <div>
+                        <div className="rec-name">{r.storeName}</div>
+                        <div className="rec-meta">{formatCurrency(r.total)}{r.position===1?" · Líder":` · -${formatCurrency(r.gap)} del líder (${r.lattesNeeded} lattes de $${LATTE_PRICE})`}</div>
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      {r.goal<=0&&<span style={{fontSize:11,color:p.gray}}>Sin meta asignada</span>}
+                      {r.goal>0&&r.tier==="supernova"&&<span className="badge badge-green">☄️ Supernova · {r.streak} seguidos</span>}
+                      {r.goal>0&&r.tier==="star"&&<span className="badge badge-green">🌟 Star Mode · {r.streak} seguidos</span>}
+                      {r.goal>0&&r.tier==="building"&&<span className="badge badge-amber">⭐ {r.streak}/5 — faltan {5-r.streak} para Star Mode</span>}
+                      {r.goal>0&&r.tier==="none"&&<span className="badge badge-red">{"❤️".repeat(r.lives)}{"🖤".repeat(3-r.lives)} sin racha</span>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {!loadingRanking&&!rankingRows.length&&<div style={{textAlign:"center",color:p.gray,fontSize:13,padding:"20px 0"}}>Sin datos de ventas en este período.</div>}
             </div>
           )}
 
