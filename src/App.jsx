@@ -275,6 +275,12 @@ export default function App() {
   const [assigningTasks, setAssigningTasks] = useState(false);
   const [taskPhotoModal, setTaskPhotoModal] = useState(null);
 
+  // ── METAS DE VENTA POR TURNO ──────────────────────────────────────────────
+  const [salesGoals, setSalesGoals] = useState([]);
+  const [goalInputs, setGoalInputs] = useState({}); // {`${storeId}_${shift}`: "1234"}
+  const [savingGoalKey, setSavingGoalKey] = useState(null);
+  const [metasTodayCuts, setMetasTodayCuts] = useState([]);
+
   // ── AVISOS / ALERTAS ──────────────────────────────────────────────────────
   const [activeAlerts, setActiveAlerts] = useState([]); // banners a mostrar al empleado
   const [adminAnnounceForm, setAdminAnnounceForm] = useState({message:"",audience:"todos",employeeId:""});
@@ -315,6 +321,7 @@ export default function App() {
   },[adminUnlocked]);
 
   useEffect(()=>{ if(adminUnlocked&&adminTab==="tareas") loadAdminTasks(); },[adminUnlocked,adminTab,adminTasksDate]);
+  useEffect(()=>{ if(adminUnlocked&&adminTab==="metas") loadSalesGoals(); },[adminUnlocked,adminTab]);
   useEffect(()=>{ if(adminUnlocked&&adminTab==="avisos") loadAdminAnnouncements(); },[adminUnlocked,adminTab]);
 
   async function loadMyRecords() {
@@ -519,6 +526,34 @@ export default function App() {
   async function loadAdminTasks(){
     const {data}=await supabase.from("task_assignments").select("*").eq("task_date",adminTasksDate).order("store_id").order("employee_name");
     if(data) setAdminTasksList(data);
+  }
+
+  // ── METAS DE VENTA: cargar y guardar (fijas por tienda+turno hasta que se actualicen) ──
+  async function loadSalesGoals(){
+    try{
+      const {data}=await supabase.from("sales_goals").select("*");
+      if(data) setSalesGoals(data);
+      const todayStr=new Date().toISOString().split("T")[0];
+      const {data:todayCuts}=await supabase.from("cuts").select("store_id,shift,total_corte,employee_id,timestamp").gte("timestamp",`${todayStr}T00:00:00`);
+      if(todayCuts) setMetasTodayCuts(todayCuts);
+    }catch(err){
+      console.error("loadSalesGoals error:",err);
+    }
+  }
+
+  async function handleSaveGoal(storeId,storeName,shift){
+    const key=`${storeId}_${shift}`;
+    const amount=parseFloat(goalInputs[key]);
+    if(isNaN(amount)||amount<0) return;
+    setSavingGoalKey(key);
+    try{
+      await supabase.from("sales_goals").upsert({store_id:storeId,store_name:storeName,shift,goal_amount:amount,updated_by:currentUser?.username||"admin",updated_at:new Date().toISOString()},{onConflict:"store_id,shift"});
+      await loadSalesGoals();
+    }catch(err){
+      console.error("handleSaveGoal error:",err);
+    }finally{
+      setSavingGoalKey(null);
+    }
   }
 
   function addAdminTaskItem(){setAdminTaskForm(f=>({...f,items:[...f.items,""]}));}
@@ -1178,10 +1213,10 @@ export default function App() {
           {isManager&&!isSuperAdmin&&<div className="info-box info-blue">Acceso de gerente — puedes asignar tareas del turno y mandar avisos. Solo Luis, Fernanda y Victoria tienen acceso a cortes, empleados y derecho de veto.</div>}
 
           <div className="tab-row">
-            {(isSuperAdmin?["hoy","cortes","empleados","tareas","avisos","digest"]:["tareas","avisos"]).map(t=>(
+            {(isSuperAdmin?["hoy","cortes","empleados","metas","tareas","avisos","digest"]:["metas","tareas","avisos"]).map(t=>(
               <button key={t} className="tab-btn" onClick={()=>setAdminTab(t)}
                 style={{background:adminTab===t?p.coffee:"white",color:adminTab===t?p.cream:p.coffee,border:`1.5px solid ${adminTab===t?p.coffee:p.foam}`,fontSize:11}}>
-                {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":t==="tareas"?"Tareas":t==="avisos"?"Avisos":"Digest"}
+                {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":t==="metas"?"Metas":t==="tareas"?"Tareas":t==="avisos"?"Avisos":"Digest"}
               </button>
             ))}
           </div>
@@ -1312,6 +1347,54 @@ export default function App() {
                   })}
                   {!filteredCuts.length&&<div style={{textAlign:"center",color:p.gray,fontSize:13,padding:"20px 0"}}>Sin cortes en este período</div>}
                 </>);
+              })()}
+            </div>
+          )}
+
+          {/* METAS DE VENTA POR TURNO */}
+          {!loadingAdmin&&(isSuperAdmin||isManager)&&adminTab==="metas"&&(
+            <div className="card">
+              <div className="card-title">Metas de venta por turno</div>
+              <div style={{fontSize:12,color:p.gray,marginBottom:14}}>
+                La meta queda fija para ese turno y tienda hasta que la cambies. Se compara contra el total del corte del día.
+              </div>
+              {(()=>{
+                const shiftKeys=["matutino","intermedio","vespertino"];
+                return STORES.map(store=>(
+                  <div key={store.id} style={{marginBottom:18}}>
+                    <div className="section-title">{store.name}</div>
+                    {shiftKeys.map(shift=>{
+                      const key=`${store.id}_${shift}`;
+                      const goalRow=salesGoals.find(g=>g.store_id===store.id&&g.shift===shift);
+                      const goalAmount=goalRow?.goal_amount||0;
+                      const actual=metasTodayCuts.filter(c=>c.store_id===store.id&&c.shift===shift&&c.employee_id!=='DEMO01').reduce((s,c)=>s+(c.total_corte||0),0);
+                      const pct=goalAmount>0?Math.round((actual/goalAmount)*100):null;
+                      const met=goalAmount>0&&actual>=goalAmount;
+                      return (
+                        <div key={shift} className="rec-row" style={{display:"flex",flexDirection:"column",gap:8}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                            <div className="rec-name">{SCHEDULES[shift].label}</div>
+                            {goalAmount>0&&(
+                              <span className={`badge ${met?"badge-green":"badge-red"}`}>
+                                {met?"✅":"⚠️"} {formatCurrency(actual)} / {formatCurrency(goalAmount)} ({pct}%)
+                              </span>
+                            )}
+                            {goalAmount===0&&<span style={{fontSize:11,color:p.gray}}>Sin meta asignada · Hoy: {formatCurrency(actual)}</span>}
+                          </div>
+                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                            <input type="number" placeholder="Meta $" value={goalInputs[key]??(goalAmount||"")}
+                              onChange={e=>setGoalInputs(g=>({...g,[key]:e.target.value}))}
+                              style={{flex:1,padding:"6px 10px",fontSize:12,marginBottom:0}} />
+                            <button onClick={()=>handleSaveGoal(store.id,store.name,shift)} disabled={savingGoalKey===key}
+                              style={{width:"auto",padding:"6px 14px",fontSize:12,marginBottom:0}}>
+                              {savingGoalKey===key?"Guardando...":"Guardar"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ));
               })()}
             </div>
           )}
