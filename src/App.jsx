@@ -1471,7 +1471,7 @@ export default function App() {
             </div>
 
             <div className="card">
-              <div className="card-title">Empleados registrados ({employees.length})</div>
+              <div className="card-title">Empleados registrados ({employees.filter(e=>STORES.some(s=>s.id===e.store_id)).length})</div>
               {STORES.map(store=>{
                 const emps=employees.filter(e=>e.store_id===store.id);
                 if(!emps.length) return null;
