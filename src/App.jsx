@@ -206,8 +206,14 @@ const css=`
   .mini-val{font-size:15px;font-weight:500;color:${p.coffee};}
   .mini-lbl{font-size:10px;color:${p.gray};text-transform:uppercase;letter-spacing:0.3px;margin-top:2px;}
   .section-title{font-size:11px;font-weight:600;color:${p.gray};text-transform:uppercase;letter-spacing:0.6px;margin-bottom:10px;}
-  .tab-row{display:flex;gap:6px;margin-bottom:16px;}
-  .tab-btn{flex:1;padding:9px 4px;border-radius:12px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:all 0.15s;}
+  .tab-row-wrap{position:relative;margin:0 -16px 16px;}
+  .tab-row{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:4px 16px 8px;scroll-snap-type:x proximity;}
+  .tab-row::-webkit-scrollbar{display:none;}
+  .tab-btn{flex:0 0 auto;white-space:nowrap;padding:9px 16px;border-radius:20px;font-family:'DM Sans',sans-serif;font-size:12.5px;font-weight:500;cursor:pointer;transition:all 0.15s;scroll-snap-align:start;}
+  .tab-row-fade{position:absolute;top:4px;bottom:8px;right:0;width:28px;background:linear-gradient(to right, rgba(243,238,225,0), ${p.milk});pointer-events:none;}
+  .pill-toggle{display:flex;gap:6px;margin-bottom:16px;background:${p.milk};border-radius:14px;padding:4px;}
+  .pill-toggle button{flex:1;padding:9px 4px;border:none;border-radius:11px;font-family:'DM Sans',sans-serif;font-size:12.5px;font-weight:500;cursor:pointer;background:transparent;color:${p.gray};transition:all 0.15s;}
+  .pill-toggle button.active{background:${p.coffee};color:${p.cream};}
   .expense-row{display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;}
   .expense-row input{margin-bottom:0;}
   .remove-btn{background:${p.foam};border:none;border-radius:12px;padding:11px 14px;cursor:pointer;font-size:16px;flex-shrink:0;}
@@ -281,6 +287,7 @@ export default function App() {
   const [goalInputs, setGoalInputs] = useState({}); // {`${storeId}_${shift}`: "1234"}
   const [savingGoalKey, setSavingGoalKey] = useState(null);
   const [metasTodayCuts, setMetasTodayCuts] = useState([]);
+  const [metasView, setMetasView] = useState("resumen"); // "resumen" (solo lectura) | "editar"
 
   // ── CUMPLIMIENTO DE TAREAS: score por empleado ──────────────────────────────
   const [complianceRows, setComplianceRows] = useState([]);
@@ -1406,13 +1413,16 @@ export default function App() {
 
           {isManager&&!isSuperAdmin&&<div className="info-box info-blue">Acceso de gerente — puedes asignar tareas del turno y mandar avisos. Solo Luis, Fernanda y Victoria tienen acceso a cortes, empleados y derecho de veto.</div>}
 
-          <div className="tab-row">
-            {(isSuperAdmin?["hoy","cortes","empleados","metas","ranking","tareas","cumplimiento","avisos","digest"]:["metas","tareas","cumplimiento","avisos"]).map(t=>(
-              <button key={t} className="tab-btn" onClick={()=>setAdminTab(t)}
-                style={{background:adminTab===t?p.coffee:"white",color:adminTab===t?p.cream:p.coffee,border:`1.5px solid ${adminTab===t?p.coffee:p.foam}`,fontSize:11}}>
-                {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":t==="metas"?"Metas":t==="ranking"?"Ranking":t==="tareas"?"Tareas":t==="cumplimiento"?"Cumplimiento":t==="avisos"?"Avisos":"Digest"}
-              </button>
-            ))}
+          <div className="tab-row-wrap">
+            <div className="tab-row">
+              {(isSuperAdmin?["hoy","cortes","empleados","metas","ranking","tareas","cumplimiento","avisos","digest"]:["metas","tareas","cumplimiento","avisos"]).map(t=>(
+                <button key={t} className="tab-btn" onClick={()=>setAdminTab(t)}
+                  style={{background:adminTab===t?p.coffee:"white",color:adminTab===t?p.cream:p.coffee,border:`1.5px solid ${adminTab===t?p.coffee:p.foam}`}}>
+                  {t==="hoy"?"Hoy":t==="cortes"?"Cortes":t==="empleados"?"Empleados":t==="metas"?"Metas":t==="ranking"?"Ranking":t==="tareas"?"Tareas":t==="cumplimiento"?"Cumplimiento":t==="avisos"?"Avisos":"Digest"}
+                </button>
+              ))}
+            </div>
+            <div className="tab-row-fade"></div>
           </div>
 
           {loadingAdmin&&<div style={{textAlign:"center",padding:"40px 0",color:p.gray}}>Cargando...</div>}
@@ -1546,15 +1556,61 @@ export default function App() {
           )}
 
           {/* METAS DE VENTA POR TURNO */}
-          {!loadingAdmin&&(isSuperAdmin||isManager)&&adminTab==="metas"&&(
+          {!loadingAdmin&&(isSuperAdmin||isManager)&&adminTab==="metas"&&(()=>{
+            const shiftKeys=["matutino","vespertino"]; // el intermedio no cierra caja, no aplica meta de venta
+            const allRows=[];
+            STORES.forEach(store=>{
+              shiftKeys.forEach(shift=>{
+                const goalRow=salesGoals.find(g=>g.store_id===store.id&&g.shift===shift);
+                const goalAmount=goalRow?.goal_amount||0;
+                const actual=metasTodayCuts.filter(c=>c.store_id===store.id&&c.shift===shift&&c.employee_id!=='DEMO01').reduce((s,c)=>s+(c.total_corte||0),0);
+                const pct=goalAmount>0?Math.round((actual/goalAmount)*100):null;
+                allRows.push({storeId:store.id,storeName:store.name,shift,goalAmount,actual,pct,met:goalAmount>0&&actual>=goalAmount});
+              });
+            });
+            // Revisar primero lo que necesita atención: sin cumplir arriba, sin meta asignada al final.
+            const sortedRows=[...allRows].sort((a,b)=>{
+              if(a.goalAmount<=0&&b.goalAmount<=0) return 0;
+              if(a.goalAmount<=0) return 1;
+              if(b.goalAmount<=0) return -1;
+              return a.pct-b.pct;
+            });
+            return(
             <div className="card">
               <div className="card-title">Metas de venta por turno</div>
-              <div style={{fontSize:12,color:p.gray,marginBottom:14}}>
-                La meta queda fija para ese turno y tienda hasta que la cambies. Se compara contra el total del corte del día.
+              <div className="pill-toggle">
+                <button className={metasView==="resumen"?"active":""} onClick={()=>setMetasView("resumen")}>📋 Revisar</button>
+                <button className={metasView==="editar"?"active":""} onClick={()=>setMetasView("editar")}>✏️ Editar metas</button>
               </div>
-              {(()=>{
-                const shiftKeys=["matutino","vespertino"]; // el intermedio no cierra caja, no aplica meta de venta
-                return STORES.map(store=>(
+
+              {metasView==="resumen"&&(<>
+                <div style={{fontSize:12,color:p.gray,marginBottom:14}}>
+                  Cómo va cada tienda hoy contra su meta de turno, de peor a mejor. Cambia a "Editar metas" para poner o ajustar montos.
+                </div>
+                {sortedRows.map(r=>(
+                  <div key={`${r.storeId}_${r.shift}`} className="rec-row">
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                      <div>
+                        <div className="rec-name">{r.storeName}</div>
+                        <div className="rec-meta">{SCHEDULES[r.shift].label}</div>
+                      </div>
+                      {r.goalAmount>0?(
+                        <span className={`badge ${r.met?"badge-green":"badge-red"}`}>
+                          {r.met?"✅":"⚠️"} {formatCurrency(r.actual)} / {formatCurrency(r.goalAmount)} ({r.pct}%)
+                        </span>
+                      ):(
+                        <span style={{fontSize:11,color:p.gray,textAlign:"right"}}>Sin meta · Hoy: {formatCurrency(r.actual)}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </>)}
+
+              {metasView==="editar"&&(<>
+                <div style={{fontSize:12,color:p.gray,marginBottom:14}}>
+                  La meta queda fija para ese turno y tienda hasta que la cambies. Se compara contra el total del corte del día.
+                </div>
+                {STORES.map(store=>(
                   <div key={store.id} style={{marginBottom:18}}>
                     <div className="section-title">{store.name}</div>
                     {shiftKeys.map(shift=>{
@@ -1588,10 +1644,11 @@ export default function App() {
                       );
                     })}
                   </div>
-                ));
-              })()}
+                ))}
+              </>)}
             </div>
-          )}
+            );
+          })()}
 
           {/* RANKING DE TIENDAS — ESTILO F1 + LOGROS */}
           {isSuperAdmin&&adminTab==="ranking"&&(
