@@ -24,7 +24,7 @@ const BYPASS_USERS = ["elmaschingon", "fernanda.hughes", "victoria.santamaria", 
 // Derecho de veto / admin completo (cortes, empleados, digest)
 const SUPER_ADMIN_USERS = ["fernanda.hughes", "victoria.santamaria", "luis.gutierrez2", "luis.gutierrez"];
 // Gerentes: pueden asignar tareas del día pero NO tienen derecho de veto ni ven cortes/empleados/digest
-const MANAGER_USERS = ["omar.rivera", "magali.gomez", "monserrath.rodriguez"];
+const MANAGER_USERS = ["omar.rivera", "magali.gomez", "monserrath.rodriguez", "violeta.ruisenor"];
 
 const APPROVED_EXPENSE_KEYWORDS = ["café","cafe","leche","hielo","azúcar","azucar","servilleta","vaso","tapa","popote","limpieza","detergente","papel","bolsa","agua","propina"];
 
@@ -391,7 +391,8 @@ export default function App() {
   async function loadManagerEmployees() {
     setLoadingAdmin(true);
     try{
-      const {data:emps}=await supabase.from("employees").select("id,full_name,store_id,store_name").order("store_id");
+      // Los gerentes de tienda solo ven y gestionan a los empleados de SU tienda.
+      const {data:emps}=await supabase.from("employees").select("id,full_name,store_id,store_name").eq("store_id",currentUser?.storeId).order("full_name");
       if(emps) setEmployees(emps);
     }catch(err){
       console.error("loadManagerEmployees error:",err);
@@ -547,7 +548,9 @@ export default function App() {
 
   // ── ADMIN: asignar y ver tareas ───────────────────────────────────────────
   async function loadAdminTasks(){
-    const {data}=await supabase.from("task_assignments").select("*").eq("task_date",adminTasksDate).order("store_id").order("employee_name");
+    let q=supabase.from("task_assignments").select("*").eq("task_date",adminTasksDate);
+    if(isManager&&!isSuperAdmin) q=q.eq("store_id",currentUser?.storeId); // gerente: solo su tienda
+    const {data}=await q.order("store_id").order("employee_name");
     if(data) setAdminTasksList(data);
   }
 
@@ -565,7 +568,9 @@ export default function App() {
     setLoadingCompliance(true);
     try{
       const start=complianceStartDate();
-      const {data}=await supabase.from("task_assignments").select("employee_id,employee_name,store_id,store_name,status,task_date").gte("task_date",start).order("employee_name");
+      let q=supabase.from("task_assignments").select("employee_id,employee_name,store_id,store_name,status,task_date").gte("task_date",start);
+      if(isManager&&!isSuperAdmin) q=q.eq("store_id",currentUser?.storeId); // gerente: solo su tienda
+      const {data}=await q.order("employee_name");
       if(!data){ setComplianceRows([]); return; }
       const byEmp={};
       data.forEach(t=>{
@@ -587,7 +592,9 @@ export default function App() {
   // ── STRIKES: incumplimientos de meta de venta y cortes no subidos ───────────
   async function loadStrikes(){
     try{
-      const {data}=await supabase.from("compliance_strikes").select("*").order("strike_date",{ascending:false});
+      let q=supabase.from("compliance_strikes").select("*");
+      if(isManager&&!isSuperAdmin) q=q.eq("store_id",currentUser?.storeId); // gerente: solo su tienda
+      const {data}=await q.order("strike_date",{ascending:false});
       if(!data){ setStrikeRows([]); return; }
       const byEmp={};
       data.forEach(s=>{
@@ -1558,8 +1565,10 @@ export default function App() {
           {/* METAS DE VENTA POR TURNO */}
           {!loadingAdmin&&(isSuperAdmin||isManager)&&adminTab==="metas"&&(()=>{
             const shiftKeys=["matutino","vespertino"]; // el intermedio no cierra caja, no aplica meta de venta
+            // Los gerentes de tienda solo ven/editan la meta de SU tienda; los super admin ven todas.
+            const visibleStores=isSuperAdmin?STORES:STORES.filter(s=>s.id===currentUser?.storeId);
             const allRows=[];
-            STORES.forEach(store=>{
+            visibleStores.forEach(store=>{
               shiftKeys.forEach(shift=>{
                 const goalRow=salesGoals.find(g=>g.store_id===store.id&&g.shift===shift);
                 const goalAmount=goalRow?.goal_amount||0;
@@ -1610,7 +1619,7 @@ export default function App() {
                 <div style={{fontSize:12,color:p.gray,marginBottom:14}}>
                   La meta queda fija para ese turno y tienda hasta que la cambies. Se compara contra el total del corte del día.
                 </div>
-                {STORES.map(store=>(
+                {visibleStores.map(store=>(
                   <div key={store.id} style={{marginBottom:18}}>
                     <div className="section-title">{store.name}</div>
                     {shiftKeys.map(shift=>{
