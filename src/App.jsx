@@ -19,7 +19,8 @@ const RADIUS_METERS = 100;
 const LATE_MINUTES = 15;
 const CAPUCHINO_PRICE = 66;
 const LATTE_PRICE = 71;
-const ADMIN_PIN = "5366";
+// PIN de admin: se define en Vercel como VITE_ADMIN_PIN. Si no existe, nadie entra por PIN.
+const ADMIN_PIN = import.meta.env.VITE_ADMIN_PIN || null;
 const BYPASS_USERS = ["elmaschingon", "fernanda.hughes", "victoria.santamaria", "luis.gutierrez2", "luis.gutierrez"];
 // Derecho de veto / admin completo (cortes, empleados, digest)
 const SUPER_ADMIN_USERS = ["fernanda.hughes", "victoria.santamaria", "luis.gutierrez2", "luis.gutierrez"];
@@ -1406,9 +1407,9 @@ export default function App() {
             <div style={{fontSize:13,color:p.gray,marginBottom:16}}>Ingresa el PIN para continuar</div>
             <input type="password" placeholder="• • • •" value={adminPin}
               onChange={e=>setAdminPin(e.target.value)}
-              onKeyDown={e=>{if(e.key==="Enter"){if(adminPin===ADMIN_PIN)setAdminUnlocked(true);else{alert("PIN incorrecto");setAdminPin("");}}}}
+              onKeyDown={e=>{if(e.key==="Enter"){if(ADMIN_PIN&&adminPin===ADMIN_PIN)setAdminUnlocked(true);else{alert("PIN incorrecto");setAdminPin("");}}}}
               style={{textAlign:"center",letterSpacing:8,fontSize:20,marginBottom:14}} />
-            <button className="btn btn-primary" onClick={()=>{if(adminPin===ADMIN_PIN)setAdminUnlocked(true);else{alert("PIN incorrecto");setAdminPin("");}}}>Entrar</button>
+            <button className="btn btn-primary" onClick={()=>{if(ADMIN_PIN&&adminPin===ADMIN_PIN)setAdminUnlocked(true);else{alert("PIN incorrecto");setAdminPin("");}}}>Entrar</button>
           </div>
         )}
 
